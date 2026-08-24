@@ -30,6 +30,13 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
+import { createClient } from '@supabase/supabase-js';
+
+const SUPABASE_URL = 'https://gfrfzhwpzocklqycdpxy.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_ahTXHPST4iPLQhlvRSfHMg_gvU5UjuK';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
 /* ---------------------------------------------------------------
    Constantes
 --------------------------------------------------------------- */
