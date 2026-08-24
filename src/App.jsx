@@ -27,6 +27,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  RefreshCw,
 } from 'lucide-react';
 
 /* ---------------------------------------------------------------
@@ -36,8 +37,10 @@ import {
 const MONTHS_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 const DAYS_FR = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 const DAYS_FULL_FR = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+const DAYS_FULL_MONDAY = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 
 const PROJECT_COLORS = ['#2D6A4F', '#B08968', '#3D5A80', '#B23A30', '#8A6BAE', '#C98A2C'];
+const SCHEDULE_COLORS = ['#2D6A4F', '#3D5A80', '#B08968', '#B23A30', '#8A6BAE', '#C98A2C', '#4C6B57', '#5C6259'];
 const PASSWORD_CHARSET = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
 
 const STATUS_ORDER = ['a_venir', 'en_cours', 'termine'];
@@ -120,6 +123,11 @@ function formatDateFR(iso) {
   if (!iso) return '';
   const [y, m, d] = iso.split('-').map(Number);
   return `${d} ${MONTHS_FR[m - 1]}`;
+}
+
+function formatTime(date) {
+  if (!date) return '';
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
 function formatRange(start, end) {
@@ -864,6 +872,8 @@ export default function MeleeApp() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState(null);
 
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [changePasswordError, setChangePasswordError] = useState('');
@@ -930,6 +940,7 @@ export default function MeleeApp() {
         setTasks(loadedTasks);
         setSession(loadedSession);
         setDataLoaded(true);
+        setLastSync(new Date());
       }
     }
     load();
@@ -959,6 +970,41 @@ export default function MeleeApp() {
     setToast({ message });
     setTimeout(() => setToast(null), 3500);
   }
+
+  // Va rechercher les données partagées (comptes, projets, tâches) sans jamais effacer
+  // ce qui est déjà affiché si une lecture échoue ponctuellement — sûr à appeler en fond.
+  async function refreshSharedData(manual) {
+    if (manual) setSyncing(true);
+    const results = await Promise.allSettled([
+      window.storage.get('users', true),
+      window.storage.get('projects', true),
+      window.storage.get('tasks', true),
+    ]);
+    const [usersRes, projectsRes, tasksRes] = results;
+    if (usersRes.status === 'fulfilled' && usersRes.value && usersRes.value.value) {
+      setUsers(JSON.parse(usersRes.value.value));
+    }
+    if (projectsRes.status === 'fulfilled' && projectsRes.value && projectsRes.value.value) {
+      setProjects(JSON.parse(projectsRes.value.value));
+    }
+    if (tasksRes.status === 'fulfilled' && tasksRes.value && tasksRes.value.value) {
+      setTasks(JSON.parse(tasksRes.value.value));
+    }
+    setLastSync(new Date());
+    if (manual) setSyncing(false);
+  }
+
+  // Synchronisation automatique en arrière-plan pendant que l'appli est ouverte et connectée
+  useEffect(() => {
+    if (!dataLoaded || !session) return;
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        refreshSharedData(false);
+      }
+    }, 8000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataLoaded, session]);
 
   async function persistUsers(next) {
     setUsers(next);
@@ -1367,6 +1413,13 @@ export default function MeleeApp() {
         </div>
         {dataLoaded && session && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }}>
+            <button
+              className="header-icon-btn"
+              title={lastSync ? `Synchronisé à ${formatTime(lastSync)} — cliquer pour actualiser` : 'Actualiser'}
+              onClick={() => refreshSharedData(true)}
+            >
+              <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+            </button>
             {session.role === 'admin' && (
               <button className="header-icon-btn" title="Administration" onClick={() => goToTab('admin')}>
                 <Shield size={15} />
