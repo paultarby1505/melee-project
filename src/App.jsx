@@ -1,4 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Home as HomeIcon,
   FolderKanban,
@@ -28,6 +33,7 @@ import {
   Eye,
   EyeOff,
   RefreshCw,
+  Send,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -116,7 +122,7 @@ const TABS = [
   { id: 'projects', label: 'Projets', icon: FolderKanban },
   { id: 'planning', label: 'Planning', icon: CalendarDays },
   { id: 'cycles', label: 'Cycles rugby', icon: Dumbbell, stub: true },
-  { id: 'chat', label: 'Chat', icon: MessageSquare, stub: true },
+  { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'docs', label: 'Documents', icon: FileText, stub: true },
 ];
 
@@ -126,12 +132,6 @@ const STUB_CONTENT = {
     title: 'Cycles rugby',
     description:
       "La gestion des cycles d'entraînement arrivera dans une prochaine itération.",
-  },
-  chat: {
-    icon: MessageSquare,
-    title: "Chat d'équipe",
-    description:
-      "La messagerie entre membres de l'équipe arrivera dans une prochaine itération.",
   },
   docs: {
     icon: FileText,
@@ -287,6 +287,33 @@ function getWeekDays(anchorDate) {
 
     return { date: d, iso };
   });
+}
+
+function getDmChannel(usernameA, usernameB) {
+  return 'dm:' + [usernameA, usernameB].sort().join(':');
+}
+
+function mapMessageRow(m) {
+  return {
+    id: m.id,
+    channel: m.channel,
+    senderUsername: m.sender_username,
+    senderDisplayName: m.sender_display_name,
+    text: m.text,
+    createdAt: m.created_at,
+  };
+}
+
+const ONLINE_THRESHOLD_MS = 30000;
+
+function isOnline(user) {
+  if (!user?.lastSeen) return false;
+
+  return (
+    Date.now() -
+      new Date(user.lastSeen).getTime() <
+    ONLINE_THRESHOLD_MS
+  );
 }
 
 /* =========================================================
@@ -2406,6 +2433,16 @@ export default function MeleeApp() {
     null
   );
 
+  const [messages, setMessages] = useState([]);
+
+  const [chatRoom, setChatRoom] = useState(
+    'global'
+  );
+
+  const [chatDraft, setChatDraft] = useState('');
+
+  const chatEndRef = useRef(null);
+
   /* =====================================================
      TOAST
   ===================================================== */
@@ -2430,6 +2467,7 @@ export default function MeleeApp() {
         tasksResult,
         eventsResult,
         taskCommentsResult,
+        messagesResult,
       ] = await Promise.all([
         supabase
           .from('users')
@@ -2465,6 +2503,14 @@ export default function MeleeApp() {
           .order('created_at', {
             ascending: true,
           }),
+
+        supabase
+          .from('messages')
+          .select('*')
+          .order('created_at', {
+            ascending: true,
+          })
+          .limit(500),
       ]);
 
       if (usersResult.error)
@@ -2482,6 +2528,9 @@ export default function MeleeApp() {
       if (taskCommentsResult.error)
         throw taskCommentsResult.error;
 
+      if (messagesResult.error)
+        throw messagesResult.error;
+
       setUsers(
         (usersResult.data || []).map(
           (u) => ({
@@ -2491,6 +2540,7 @@ export default function MeleeApp() {
             role: u.role,
             passwordHash:
               u.password_hash,
+            lastSeen: u.last_seen,
           })
         )
       );
@@ -2566,6 +2616,12 @@ export default function MeleeApp() {
         )
       );
 
+      setMessages(
+        (messagesResult.data || []).map(
+          mapMessageRow
+        )
+      );
+
       setLastSync(new Date());
     } catch (error) {
       console.error(error);
@@ -2603,9 +2659,26 @@ export default function MeleeApp() {
     });
   }, []);
 
+  async function touchPresence() {
+    if (!session) return;
+
+    try {
+      await supabase
+        .from('users')
+        .update({
+          last_seen: new Date().toISOString(),
+        })
+        .eq('username', session.username);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
   useEffect(() => {
     if (!dataLoaded || !session)
       return;
+
+    touchPresence();
 
     const interval = setInterval(() => {
       if (
@@ -2613,12 +2686,53 @@ export default function MeleeApp() {
         'visible'
       ) {
         loadData();
+        touchPresence();
       }
     }, 10000);
 
     return () =>
       clearInterval(interval);
   }, [dataLoaded, session]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    const channel = supabase
+      .channel('messages-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+        },
+        (payload) => {
+          setMessages((prev) => {
+            if (
+              prev.some(
+                (m) => m.id === payload.new.id
+              )
+            ) {
+              return prev;
+            }
+
+            return [
+              ...prev,
+              mapMessageRow(payload.new),
+            ].sort((a, b) =>
+              a.createdAt.localeCompare(
+                b.createdAt
+              )
+            );
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session]);
 
   useEffect(() => {
     if (!dataLoaded || !session)
@@ -3298,6 +3412,60 @@ export default function MeleeApp() {
   }
 
   /* =====================================================
+     CHAT
+  ===================================================== */
+
+  async function sendMessage(channel, text) {
+    if (!text.trim()) return;
+
+    const id = genId();
+
+    try {
+      const { error } =
+        await supabase
+          .from('messages')
+          .insert({
+            id,
+            channel,
+            sender_username:
+              session.username,
+            sender_display_name:
+              session.displayName,
+            text: text.trim(),
+          });
+
+      if (error) throw error;
+
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === id)) {
+          return prev;
+        }
+
+        return [
+          ...prev,
+          {
+            id,
+            channel,
+            senderUsername:
+              session.username,
+            senderDisplayName:
+              session.displayName,
+            text: text.trim(),
+            createdAt:
+              new Date().toISOString(),
+          },
+        ];
+      });
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'envoyer le message."
+      );
+    }
+  }
+
+  /* =====================================================
      NAVIGATION
   ===================================================== */
 
@@ -3477,6 +3645,28 @@ export default function MeleeApp() {
 
       return result;
     }, [eventsByDate, filterMember]);
+
+  const activeChatChannel =
+    chatRoom === 'global'
+      ? 'global'
+      : getDmChannel(
+          session?.username,
+          chatRoom
+        );
+
+  const roomMessages = useMemo(
+    () =>
+      messages.filter(
+        (m) => m.channel === activeChatChannel
+      ),
+    [messages, activeChatChannel]
+  );
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({
+      behavior: 'smooth',
+    });
+  }, [roomMessages.length, chatRoom]);
 
   const now = new Date();
 
@@ -4609,6 +4799,307 @@ export default function MeleeApp() {
               </div>
             )}
 
+            {/* CHAT */}
+
+            {activeTab === 'chat' && (
+              <div>
+                <h1 className="font-display text-2xl">
+                  Chat
+                </h1>
+
+                <div className="pitch-divider" />
+
+                <div
+                  className="flex gap-3"
+                  style={{
+                    alignItems: 'flex-start',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div
+                    className="flex flex-row lg:flex-col gap-1"
+                    style={{
+                      width: '100%',
+                      maxWidth: 220,
+                      overflowX: 'auto',
+                    }}
+                  >
+                    <button
+                      className="nav-tab"
+                      style={{
+                        justifyContent:
+                          'flex-start',
+                        borderBottom: 'none',
+                        borderRadius: 8,
+                        background:
+                          chatRoom === 'global'
+                            ? 'var(--pitch-tint)'
+                            : 'transparent',
+                        color:
+                          chatRoom === 'global'
+                            ? 'var(--pitch-dark)'
+                            : 'var(--ink-light)',
+                      }}
+                      onClick={() =>
+                        setChatRoom('global')
+                      }
+                    >
+                      <MessageSquare size={14} />
+                      Général
+                    </button>
+
+                    {users
+                      .filter(
+                        (u) =>
+                          u.username !==
+                          session.username
+                      )
+                      .map((user) => (
+                        <button
+                          key={user.username}
+                          className="nav-tab"
+                          style={{
+                            justifyContent:
+                              'flex-start',
+                            borderBottom: 'none',
+                            borderRadius: 8,
+                            background:
+                              chatRoom ===
+                              user.username
+                                ? 'var(--pitch-tint)'
+                                : 'transparent',
+                            color:
+                              chatRoom ===
+                              user.username
+                                ? 'var(--pitch-dark)'
+                                : 'var(--ink-light)',
+                          }}
+                          onClick={() =>
+                            setChatRoom(
+                              user.username
+                            )
+                          }
+                        >
+                          <span
+                            style={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              background: isOnline(
+                                user
+                              )
+                                ? 'var(--pitch)'
+                                : 'var(--line)',
+                              display:
+                                'inline-block',
+                            }}
+                          />
+                          {user.displayName}
+                        </button>
+                      ))}
+                  </div>
+
+                  <div
+                    className="card"
+                    style={{
+                      flex: 1,
+                      minWidth: 260,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      height: 480,
+                      padding: 0,
+                      cursor: 'default',
+                    }}
+                  >
+                    <div
+                      className="flex items-center justify-between"
+                      style={{
+                        padding: '12px 16px',
+                        borderBottom:
+                          '1px solid var(--line)',
+                      }}
+                    >
+                      <p className="text-sm font-semibold">
+                        {chatRoom === 'global'
+                          ? 'Général'
+                          : users.find(
+                              (u) =>
+                                u.username ===
+                                chatRoom
+                            )?.displayName}
+                      </p>
+
+                      {chatRoom !== 'global' && (
+                        <p
+                          className="text-xs"
+                          style={{
+                            color: isOnline(
+                              users.find(
+                                (u) =>
+                                  u.username ===
+                                  chatRoom
+                              )
+                            )
+                              ? 'var(--pitch-dark)'
+                              : 'var(--ink-light)',
+                          }}
+                        >
+                          {isOnline(
+                            users.find(
+                              (u) =>
+                                u.username ===
+                                chatRoom
+                            )
+                          )
+                            ? 'En ligne'
+                            : 'Hors ligne'}
+                        </p>
+                      )}
+                    </div>
+
+                    <div
+                      style={{
+                        flex: 1,
+                        overflowY: 'auto',
+                        padding: 16,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                      }}
+                    >
+                      {roomMessages.length === 0 ? (
+                        <p
+                          className="text-sm"
+                          style={{
+                            color:
+                              'var(--ink-light)',
+                          }}
+                        >
+                          Aucun message pour
+                          l'instant.
+                        </p>
+                      ) : (
+                        roomMessages.map((m) => {
+                          const mine =
+                            m.senderUsername ===
+                            session.username;
+
+                          return (
+                            <div
+                              key={m.id}
+                              style={{
+                                alignSelf: mine
+                                  ? 'flex-end'
+                                  : 'flex-start',
+                                maxWidth: '75%',
+                              }}
+                            >
+                              {chatRoom ===
+                                'global' &&
+                                !mine && (
+                                  <p
+                                    className="text-xs"
+                                    style={{
+                                      color:
+                                        getMemberColor(
+                                          m.senderDisplayName
+                                        ),
+                                    }}
+                                  >
+                                    {
+                                      m.senderDisplayName
+                                    }
+                                  </p>
+                                )}
+
+                              <div
+                                style={{
+                                  background: mine
+                                    ? 'var(--pitch-dark)'
+                                    : 'var(--chalk)',
+                                  color: mine
+                                    ? 'var(--white)'
+                                    : 'var(--ink)',
+                                  borderRadius: 10,
+                                  padding:
+                                    '8px 12px',
+                                }}
+                              >
+                                <p className="text-sm">
+                                  {m.text}
+                                </p>
+                              </div>
+
+                              <p
+                                className="text-xs mt-1"
+                                style={{
+                                  color:
+                                    'var(--ink-light)',
+                                  textAlign: mine
+                                    ? 'right'
+                                    : 'left',
+                                }}
+                              >
+                                {formatTime(
+                                  new Date(
+                                    m.createdAt
+                                  )
+                                )}
+                              </p>
+                            </div>
+                          );
+                        })
+                      )}
+
+                      <div ref={chatEndRef} />
+                    </div>
+
+                    <div
+                      className="flex gap-2"
+                      style={{
+                        padding: 12,
+                        borderTop:
+                          '1px solid var(--line)',
+                      }}
+                    >
+                      <input
+                        style={{ flex: 1 }}
+                        placeholder="Écrire un message…"
+                        value={chatDraft}
+                        onChange={(e) =>
+                          setChatDraft(
+                            e.target.value
+                          )
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            sendMessage(
+                              activeChatChannel,
+                              chatDraft
+                            );
+                            setChatDraft('');
+                          }
+                        }}
+                      />
+
+                      <button
+                        className="btn-primary"
+                        onClick={() => {
+                          sendMessage(
+                            activeChatChannel,
+                            chatDraft
+                          );
+                          setChatDraft('');
+                        }}
+                      >
+                        <Send size={14} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* ADMINISTRATION */}
 
             {activeTab === 'admin' &&
@@ -4758,7 +5249,6 @@ export default function MeleeApp() {
 
             {[
               'cycles',
-              'chat',
               'docs',
             ].includes(activeTab) && (
               <div
