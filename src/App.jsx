@@ -100,19 +100,6 @@ const STATUS_META = {
   },
 };
 
-const ROLE_META = {
-  admin: {
-    label: 'Admin',
-    bg: 'var(--pitch-tint)',
-    color: 'var(--pitch-dark)',
-  },
-  membre: {
-    label: 'Membre',
-    bg: '#E7E9E6',
-    color: '#55605A',
-  },
-};
-
 const TABS = [
   { id: 'home', label: 'Accueil', icon: HomeIcon },
   { id: 'projects', label: 'Projets', icon: FolderKanban },
@@ -273,22 +260,6 @@ function getMonthMatrix(year, month) {
 
 function StatusPill({ status }) {
   const meta = STATUS_META[status] || STATUS_META.a_venir;
-
-  return (
-    <span
-      className="pill"
-      style={{
-        background: meta.bg,
-        color: meta.color,
-      }}
-    >
-      {meta.label}
-    </span>
-  );
-}
-
-function RoleBadge({ role }) {
-  const meta = ROLE_META[role] || ROLE_META.membre;
 
   return (
     <span
@@ -899,6 +870,272 @@ function TaskQuickAddForm({
   );
 }
 
+function UserFormModal({ existingUsernames, onCreate, onCancel }) {
+  const [username, setUsername] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [role, setRole] = useState('membre');
+  const [password, setPassword] = useState(() => generatePassword());
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [created, setCreated] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  async function copyPassword(value) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // presse-papier indisponible : rien à faire
+    }
+  }
+
+  async function submit() {
+    const trimmedUsername = username.trim();
+
+    if (!trimmedUsername) {
+      setError("L'identifiant est obligatoire.");
+      return;
+    }
+
+    if (
+      existingUsernames.some(
+        (u) => u.toLowerCase() === trimmedUsername.toLowerCase()
+      )
+    ) {
+      setError('Cet identifiant existe déjà.');
+      return;
+    }
+
+    setBusy(true);
+    setError('');
+
+    const ok = await onCreate({
+      username: trimmedUsername,
+      displayName: displayName.trim() || trimmedUsername,
+      password,
+      role,
+    });
+
+    setBusy(false);
+
+    if (ok) {
+      setCreated({ username: trimmedUsername, password });
+    } else {
+      setError('La création du compte a échoué.');
+    }
+  }
+
+  if (created) {
+    return (
+      <div className="modal-overlay" onClick={onCancel}>
+        <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+          <h3 className="font-display text-lg">Membre créé</h3>
+
+          <p className="text-sm mt-2" style={{ color: 'var(--ink-light)' }}>
+            Transmets ces identifiants à {created.username}. Le mot de passe
+            ne sera plus affiché ensuite.
+          </p>
+
+          <div
+            className="mt-4"
+            style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+          >
+            <div>
+              <label>Identifiant</label>
+              <input value={created.username} readOnly />
+            </div>
+
+            <div>
+              <label>Mot de passe</label>
+              <div className="flex gap-2">
+                <input
+                  value={created.password}
+                  readOnly
+                  style={{ flex: 1 }}
+                />
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={() => copyPassword(created.password)}
+                >
+                  <Copy size={14} />
+                </button>
+              </div>
+              {copied && (
+                <p className="text-xs mt-1" style={{ color: 'var(--pitch)' }}>
+                  Copié !
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-end mt-5">
+            <button className="btn-primary" onClick={onCancel}>
+              Terminé
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">Nouveau membre</h3>
+
+        <div
+          className="mt-4"
+          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+        >
+          <div>
+            <label>Identifiant</label>
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoFocus
+              placeholder="Ex. julie"
+            />
+          </div>
+
+          <div>
+            <label>Nom affiché</label>
+            <input
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="Ex. Julie"
+            />
+          </div>
+
+          <div>
+            <label>Rôle</label>
+            <select value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="membre">Membre</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+
+          <div>
+            <label>Mot de passe généré</label>
+            <div className="flex gap-2">
+              <input value={password} readOnly style={{ flex: 1 }} />
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => setPassword(generatePassword())}
+              >
+                <RefreshCw size={14} />
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <p className="text-xs" style={{ color: 'var(--red)' }}>
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit} disabled={busy}>
+            {busy ? 'Création…' : 'Créer le membre'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResetPasswordModal({ user, onConfirm, onCancel }) {
+  const [password, setPassword] = useState(() => generatePassword());
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function copyPassword() {
+    try {
+      await navigator.clipboard.writeText(password);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // presse-papier indisponible : rien à faire
+    }
+  }
+
+  async function confirm() {
+    setBusy(true);
+    await onConfirm(password);
+    setBusy(false);
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          Réinitialiser le mot de passe
+        </h3>
+
+        <p className="text-sm mt-2" style={{ color: 'var(--ink-light)' }}>
+          Nouveau mot de passe pour {user.displayName}. Transmets-le avant de
+          fermer cette fenêtre.
+        </p>
+
+        <div className="mt-4">
+          <label>Mot de passe</label>
+          <div className="flex gap-2">
+            <input value={password} readOnly style={{ flex: 1 }} />
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => setPassword(generatePassword())}
+            >
+              <RefreshCw size={14} />
+            </button>
+            <button type="button" className="icon-btn" onClick={copyPassword}>
+              <Copy size={14} />
+            </button>
+          </div>
+          {copied && (
+            <p className="text-xs mt-1" style={{ color: 'var(--pitch)' }}>
+              Copié !
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={confirm} disabled={busy}>
+            {busy ? 'Application…' : 'Confirmer la réinitialisation'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* =========================================================
    AUTH
 ========================================================= */
@@ -1347,6 +1584,12 @@ export default function MeleeApp() {
   const [showUserMenu, setShowUserMenu] =
     useState(false);
 
+  const [showUserForm, setShowUserForm] =
+    useState(false);
+
+  const [resetPasswordUser, setResetPasswordUser] =
+    useState(null);
+
   /* =====================================================
      TOAST
   ===================================================== */
@@ -1705,10 +1948,12 @@ export default function MeleeApp() {
         });
 
     if (error) {
+      console.error(error);
+
       showToast(
         "Impossible de créer le compte."
       );
-      return;
+      return false;
     }
 
     await loadData();
@@ -1716,6 +1961,132 @@ export default function MeleeApp() {
     showToast(
       'Compte créé avec succès.'
     );
+
+    return true;
+  }
+
+  async function updateUserRole(
+    username,
+    role
+  ) {
+    const otherAdmins = users.filter(
+      (u) =>
+        u.role === 'admin' &&
+        u.username !== username
+    );
+
+    if (
+      role !== 'admin' &&
+      !otherAdmins.length
+    ) {
+      showToast(
+        'Impossible de retirer le dernier administrateur.'
+      );
+      return;
+    }
+
+    try {
+      const { error } =
+        await supabase
+          .from('users')
+          .update({ role })
+          .eq('username', username);
+
+      if (error) throw error;
+
+      await loadData();
+
+      showToast('Rôle mis à jour.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de modifier le rôle.'
+      );
+    }
+  }
+
+  async function resetUserPassword(
+    username,
+    newPassword
+  ) {
+    try {
+      const passwordHash =
+        await hashPassword(
+          username,
+          newPassword
+        );
+
+      const { error } =
+        await supabase
+          .from('users')
+          .update({
+            password_hash:
+              passwordHash,
+          })
+          .eq('username', username);
+
+      if (error) throw error;
+
+      showToast(
+        'Mot de passe réinitialisé.'
+      );
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible de réinitialiser le mot de passe."
+      );
+    }
+  }
+
+  async function deleteUser(username) {
+    if (username === session.username) {
+      showToast(
+        'Tu ne peux pas supprimer ton propre compte.'
+      );
+      return;
+    }
+
+    const target = users.find(
+      (u) => u.username === username
+    );
+
+    const otherAdmins = users.filter(
+      (u) =>
+        u.role === 'admin' &&
+        u.username !== username
+    );
+
+    if (
+      target?.role === 'admin' &&
+      !otherAdmins.length
+    ) {
+      showToast(
+        'Impossible de supprimer le dernier administrateur.'
+      );
+      return;
+    }
+
+    try {
+      const { error } =
+        await supabase
+          .from('users')
+          .delete()
+          .eq('username', username);
+
+      if (error) throw error;
+
+      await loadData();
+
+      showToast('Membre supprimé.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de supprimer le membre.'
+      );
+    }
   }
 
   /* =====================================================
@@ -2942,8 +3313,8 @@ export default function MeleeApp() {
                     <button
                       className="btn-primary"
                       onClick={() =>
-                        showToast(
-                          'La création de membre sera ajoutée dans la prochaine étape.'
+                        setShowUserForm(
+                          true
                         )
                       }
                     >
@@ -2954,19 +3325,32 @@ export default function MeleeApp() {
 
                   <div className="pitch-divider" />
 
-                  {users.map(
-                    (user) => (
+                  {users.map((user) => {
+                    const isLastAdmin =
+                      user.role ===
+                        'admin' &&
+                      users.filter(
+                        (u) =>
+                          u.role ===
+                          'admin'
+                      ).length === 1;
+
+                    const isSelf =
+                      user.username ===
+                      session.username;
+
+                    return (
                       <div
                         key={
                           user.username
                         }
-                        className="flex items-center justify-between py-3"
+                        className="flex items-center justify-between py-3 gap-3"
                         style={{
                           borderBottom:
                             '1px solid var(--line)',
                         }}
                       >
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-sm font-semibold">
                             {
                               user.displayName
@@ -2987,14 +3371,77 @@ export default function MeleeApp() {
                           </p>
                         </div>
 
-                        <RoleBadge
-                          role={
-                            user.role
-                          }
-                        />
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={
+                              user.role
+                            }
+                            disabled={
+                              isLastAdmin
+                            }
+                            onChange={(
+                              e
+                            ) =>
+                              updateUserRole(
+                                user.username,
+                                e.target
+                                  .value
+                              )
+                            }
+                            style={{
+                              width: 'auto',
+                            }}
+                          >
+                            <option value="membre">
+                              Membre
+                            </option>
+
+                            <option value="admin">
+                              Admin
+                            </option>
+                          </select>
+
+                          <button
+                            className="icon-btn"
+                            title="Réinitialiser le mot de passe"
+                            onClick={() =>
+                              setResetPasswordUser(
+                                user
+                              )
+                            }
+                          >
+                            <KeyRound size={14} />
+                          </button>
+
+                          <button
+                            className="icon-btn"
+                            title="Supprimer le membre"
+                            disabled={
+                              isSelf ||
+                              isLastAdmin
+                            }
+                            onClick={() =>
+                              setConfirmState({
+                                message: `Supprimer "${user.displayName}" ?`,
+                                onConfirm:
+                                  async () => {
+                                    await deleteUser(
+                                      user.username
+                                    );
+
+                                    setConfirmState(
+                                      null
+                                    );
+                                  },
+                              })
+                            }
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </div>
-                    )
-                  )}
+                    );
+                  })}
                 </div>
               )}
 
@@ -3057,6 +3504,41 @@ export default function MeleeApp() {
             );
             setEditingProject(null);
           }}
+        />
+      )}
+
+      {/* NOUVEAU MEMBRE */}
+
+      {showUserForm && (
+        <UserFormModal
+          existingUsernames={users.map(
+            (u) => u.username
+          )}
+          onCreate={createUser}
+          onCancel={() =>
+            setShowUserForm(false)
+          }
+        />
+      )}
+
+      {/* REINITIALISATION MOT DE PASSE */}
+
+      {resetPasswordUser && (
+        <ResetPasswordModal
+          user={resetPasswordUser}
+          onConfirm={async (
+            newPassword
+          ) => {
+            await resetUserPassword(
+              resetPasswordUser.username,
+              newPassword
+            );
+
+            setResetPasswordUser(null);
+          }}
+          onCancel={() =>
+            setResetPasswordUser(null)
+          }
         />
       )}
 
