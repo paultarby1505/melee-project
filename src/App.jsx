@@ -358,7 +358,13 @@ function TaskStatusIcon({ status }) {
   return <Clock size={14} />;
 }
 
-function TaskRow({ task, onToggleStatus, onDelete }) {
+function TaskRow({
+  task,
+  onToggleStatus,
+  onDelete,
+  onEdit,
+  getMemberColor,
+}) {
   const overdue =
     task.status !== 'termine' &&
     task.dueDate &&
@@ -400,13 +406,31 @@ function TaskRow({ task, onToggleStatus, onDelete }) {
         </p>
 
         <div className="flex items-center gap-2 flex-wrap mt-1">
-          {task.assignee && (
+          {task.assignees && task.assignees.length > 0 && (
             <span
-              className="text-xs flex items-center gap-1"
+              className="text-xs flex items-center gap-1 flex-wrap"
               style={{ color: 'var(--ink-light)' }}
             >
               <User size={11} />
-              {task.assignee}
+              {task.assignees.map((name) => (
+                <span
+                  key={name}
+                  className="flex items-center gap-1"
+                >
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      background: getMemberColor
+                        ? getMemberColor(name)
+                        : 'var(--ink-light)',
+                      display: 'inline-block',
+                    }}
+                  />
+                  {name}
+                </span>
+              ))}
             </span>
           )}
 
@@ -453,6 +477,15 @@ function TaskRow({ task, onToggleStatus, onDelete }) {
         </div>
       </div>
 
+      {onEdit && (
+        <button
+          className="icon-btn"
+          onClick={() => onEdit(task)}
+        >
+          <Pencil size={14} />
+        </button>
+      )}
+
       <button
         className="icon-btn"
         onClick={() => onDelete(task.id)}
@@ -463,7 +496,12 @@ function TaskRow({ task, onToggleStatus, onDelete }) {
   );
 }
 
-function ProjectCard({ project, tasks, onClick }) {
+function ProjectCard({
+  project,
+  tasks,
+  getMemberColor,
+  onClick,
+}) {
   const projectTasks = tasks.filter(
     (task) => task.projectId === project.id
   );
@@ -501,6 +539,31 @@ function ProjectCard({ project, tasks, onClick }) {
         >
           {project.description}
         </p>
+      )}
+
+      {project.assignees && project.assignees.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-2">
+          {project.assignees.map((name) => (
+            <span
+              key={name}
+              className="text-xs flex items-center gap-1"
+              style={{ color: 'var(--ink-light)' }}
+            >
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: getMemberColor
+                    ? getMemberColor(name)
+                    : 'var(--ink-light)',
+                  display: 'inline-block',
+                }}
+              />
+              {name}
+            </span>
+          ))}
+        </div>
       )}
 
       <div className="flex items-end justify-between mt-4">
@@ -634,8 +697,54 @@ function ConfirmDialog({
   );
 }
 
+function MemberMultiSelect({ users, selected, onChange }) {
+  function toggle(name) {
+    if (selected.includes(name)) {
+      onChange(
+        selected.filter((n) => n !== name)
+      );
+    } else {
+      onChange([...selected, name]);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {users.map((user) => {
+        const active = selected.includes(
+          user.displayName
+        );
+
+        return (
+          <button
+            type="button"
+            key={user.username}
+            className="pill"
+            onClick={() =>
+              toggle(user.displayName)
+            }
+            style={{
+              background: active
+                ? 'var(--pitch-dark)'
+                : 'var(--chalk)',
+              color: active
+                ? 'var(--white)'
+                : 'var(--ink)',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            {user.displayName}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function ProjectFormModal({
   initial,
+  users,
   onSubmit,
   onCancel,
 }) {
@@ -657,6 +766,10 @@ function ProjectFormModal({
 
   const [status, setStatus] = useState(
     initial?.status || 'a_venir'
+  );
+
+  const [assignees, setAssignees] = useState(
+    initial?.assignees || []
   );
 
   const [error, setError] = useState('');
@@ -684,6 +797,7 @@ function ProjectFormModal({
       startDate,
       endDate,
       status,
+      assignees,
     });
   }
 
@@ -793,6 +907,16 @@ function ProjectFormModal({
             </select>
           </div>
 
+          <div>
+            <label>Assignés</label>
+
+            <MemberMultiSelect
+              users={users}
+              selected={assignees}
+              onChange={setAssignees}
+            />
+          </div>
+
           {error && (
             <p
               className="text-xs"
@@ -831,8 +955,9 @@ function TaskQuickAddForm({
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState('');
 
-  const [assignee, setAssignee] =
-    useState(defaultAssignee || '');
+  const [assignees, setAssignees] = useState(
+    defaultAssignee ? [defaultAssignee] : []
+  );
 
   function submit() {
     if (!title.trim()) return;
@@ -840,8 +965,11 @@ function TaskQuickAddForm({
     onAdd({
       title: title.trim(),
       dueDate,
-      assignee:
-        assignee || defaultAssignee,
+      assignees: assignees.length
+        ? assignees
+        : defaultAssignee
+        ? [defaultAssignee]
+        : [],
     });
 
     setTitle('');
@@ -850,57 +978,50 @@ function TaskQuickAddForm({
 
   return (
     <div
-      className="flex flex-col sm:flex-row gap-2 mt-3"
+      className="mt-3"
       style={{
         paddingTop: 12,
         borderTop: '1px dashed var(--line)',
       }}
     >
-      <input
-        style={{ flex: 2 }}
-        placeholder="Ajouter une tâche…"
-        value={title}
-        onChange={(e) =>
-          setTitle(e.target.value)
-        }
-        onKeyDown={(e) =>
-          e.key === 'Enter' && submit()
-        }
-      />
+      <div className="flex flex-col sm:flex-row gap-2">
+        <input
+          style={{ flex: 2 }}
+          placeholder="Ajouter une tâche…"
+          value={title}
+          onChange={(e) =>
+            setTitle(e.target.value)
+          }
+          onKeyDown={(e) =>
+            e.key === 'Enter' && submit()
+          }
+        />
 
-      <input
-        type="date"
-        style={{ flex: 1 }}
-        value={dueDate}
-        onChange={(e) =>
-          setDueDate(e.target.value)
-        }
-      />
+        <input
+          type="date"
+          style={{ flex: 1 }}
+          value={dueDate}
+          onChange={(e) =>
+            setDueDate(e.target.value)
+          }
+        />
 
-      <select
-        style={{ flex: 1 }}
-        value={assignee}
-        onChange={(e) =>
-          setAssignee(e.target.value)
-        }
-      >
-        {users.map((user) => (
-          <option
-            key={user.username}
-            value={user.displayName}
-          >
-            {user.displayName}
-          </option>
-        ))}
-      </select>
+        <button
+          className="btn-primary"
+          onClick={submit}
+        >
+          <Plus size={14} />
+          Ajouter
+        </button>
+      </div>
 
-      <button
-        className="btn-primary"
-        onClick={submit}
-      >
-        <Plus size={14} />
-        Ajouter
-      </button>
+      <div className="mt-2">
+        <MemberMultiSelect
+          users={users}
+          selected={assignees}
+          onChange={setAssignees}
+        />
+      </div>
     </div>
   );
 }
@@ -1025,6 +1146,230 @@ function EventFormModal({
           <button className="btn-primary" onClick={submit}>
             Ajouter
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TaskEditModal({
+  task,
+  users,
+  comments,
+  currentUserDisplayName,
+  onSave,
+  onAddComment,
+  onCancel,
+}) {
+  const [title, setTitle] = useState(
+    task.title || ''
+  );
+
+  const [dueDate, setDueDate] = useState(
+    task.dueDate || ''
+  );
+
+  const [status, setStatus] = useState(
+    task.status || 'a_venir'
+  );
+
+  const [assignees, setAssignees] = useState(
+    task.assignees || []
+  );
+
+  const [commentText, setCommentText] =
+    useState('');
+
+  const [error, setError] = useState('');
+
+  function submit() {
+    if (!title.trim()) {
+      setError('Le titre est obligatoire.');
+      return;
+    }
+
+    onSave(task.id, {
+      title: title.trim(),
+      dueDate,
+      status,
+      assignees,
+    });
+  }
+
+  function submitComment() {
+    if (!commentText.trim()) return;
+
+    onAddComment(task.id, commentText.trim());
+
+    setCommentText('');
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        style={{ maxWidth: 480 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          Modifier la tâche
+        </h3>
+
+        <div
+          className="mt-4"
+          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+        >
+          <div>
+            <label>Titre</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              autoFocus
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label>Échéance</label>
+              <input
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label>Statut</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+              >
+                <option value="a_venir">À venir</option>
+                <option value="en_cours">En cours</option>
+                <option value="termine">Terminé</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label>Assignés</label>
+            <MemberMultiSelect
+              users={users}
+              selected={assignees}
+              onChange={setAssignees}
+            />
+          </div>
+
+          {error && (
+            <p className="text-xs" style={{ color: 'var(--red)' }}>
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-4">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            Enregistrer
+          </button>
+        </div>
+
+        <div
+          className="mt-5"
+          style={{
+            paddingTop: 14,
+            borderTop: '1px solid var(--line)',
+          }}
+        >
+          <h4 className="font-display text-sm">
+            Commentaires
+          </h4>
+
+          <div
+            className="mt-2"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              maxHeight: 180,
+              overflowY: 'auto',
+            }}
+          >
+            {comments.length === 0 ? (
+              <p
+                className="text-xs"
+                style={{ color: 'var(--ink-light)' }}
+              >
+                Aucun commentaire pour l'instant.
+              </p>
+            ) : (
+              comments.map((comment) => (
+                <div
+                  key={comment.id}
+                  style={{
+                    background: 'var(--chalk)',
+                    borderRadius: 8,
+                    padding: '6px 10px',
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <span
+                      className="text-xs font-semibold"
+                      style={{ color: 'var(--ink)' }}
+                    >
+                      {comment.author}
+                    </span>
+
+                    <span
+                      className="text-xs"
+                      style={{ color: 'var(--ink-light)' }}
+                    >
+                      {formatTime(
+                        new Date(comment.createdAt)
+                      )}
+                    </span>
+                  </div>
+
+                  <p
+                    className="text-sm mt-1"
+                    style={{ color: 'var(--ink)' }}
+                  >
+                    {comment.text}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="flex gap-2 mt-3">
+            <input
+              style={{ flex: 1 }}
+              placeholder="Ajouter un commentaire ou un message de fin…"
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              onKeyDown={(e) =>
+                e.key === 'Enter' && submitComment()
+              }
+            />
+
+            <button
+              className="btn-secondary"
+              onClick={submitComment}
+            >
+              Publier
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1892,7 +2237,9 @@ function WeekView({
                         className="text-xs"
                         style={{ color: 'var(--ink-light)' }}
                       >
-                        {task.assignee}
+                        {(task.assignees || []).join(
+                          ', '
+                        )}
                       </p>
                     </div>
                   ))}
@@ -2051,6 +2398,14 @@ export default function MeleeApp() {
     null
   );
 
+  const [taskComments, setTaskComments] = useState(
+    []
+  );
+
+  const [editingTask, setEditingTask] = useState(
+    null
+  );
+
   /* =====================================================
      TOAST
   ===================================================== */
@@ -2074,6 +2429,7 @@ export default function MeleeApp() {
         projectsResult,
         tasksResult,
         eventsResult,
+        taskCommentsResult,
       ] = await Promise.all([
         supabase
           .from('users')
@@ -2102,6 +2458,13 @@ export default function MeleeApp() {
           .order('event_date', {
             ascending: true,
           }),
+
+        supabase
+          .from('task_comments')
+          .select('*')
+          .order('created_at', {
+            ascending: true,
+          }),
       ]);
 
       if (usersResult.error)
@@ -2115,6 +2478,9 @@ export default function MeleeApp() {
 
       if (eventsResult.error)
         throw eventsResult.error;
+
+      if (taskCommentsResult.error)
+        throw taskCommentsResult.error;
 
       setUsers(
         (usersResult.data || []).map(
@@ -2144,6 +2510,8 @@ export default function MeleeApp() {
             color:
               p.color ||
               PROJECT_COLORS[0],
+            assignees:
+              p.assignees || [],
             createdBy:
               p.created_by || '',
             createdAt:
@@ -2161,8 +2529,8 @@ export default function MeleeApp() {
             title: t.title,
             dueDate:
               t.due_date || '',
-            assignee:
-              t.assignee || '',
+            assignees:
+              t.assignees || [],
             status: t.status,
             createdBy:
               t.created_by || '',
@@ -2182,6 +2550,18 @@ export default function MeleeApp() {
             assignee: e.assignee || '',
             createdBy: e.created_by || '',
             createdAt: e.created_at,
+          })
+        )
+      );
+
+      setTaskComments(
+        (taskCommentsResult.data || []).map(
+          (c) => ({
+            id: c.id,
+            taskId: c.task_id,
+            author: c.author || '',
+            text: c.text,
+            createdAt: c.created_at,
           })
         )
       );
@@ -2611,6 +2991,8 @@ export default function MeleeApp() {
                 data.endDate ||
                 null,
               status: data.status,
+              assignees:
+                data.assignees || [],
             })
             .eq(
               'id',
@@ -2640,6 +3022,8 @@ export default function MeleeApp() {
                   projects.length %
                     PROJECT_COLORS.length
                 ],
+              assignees:
+                data.assignees || [],
               created_by:
                 session.displayName,
             });
@@ -2710,9 +3094,11 @@ export default function MeleeApp() {
             due_date:
               data.dueDate ||
               null,
-            assignee:
-              data.assignee ||
-              session.displayName,
+            assignees:
+              data.assignees &&
+              data.assignees.length
+                ? data.assignees
+                : [session.displayName],
             status:
               'a_venir',
             created_by:
@@ -2728,6 +3114,59 @@ export default function MeleeApp() {
 
       showToast(
         "Impossible d'ajouter la tâche."
+      );
+    }
+  }
+
+  async function updateTask(taskId, data) {
+    try {
+      const { error } =
+        await supabase
+          .from('tasks')
+          .update({
+            title: data.title,
+            due_date: data.dueDate || null,
+            status: data.status,
+            assignees: data.assignees || [],
+          })
+          .eq('id', taskId);
+
+      if (error) throw error;
+
+      await loadData();
+
+      setEditingTask(null);
+
+      showToast('Tâche mise à jour.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible de modifier la tâche."
+      );
+    }
+  }
+
+  async function addTaskComment(taskId, text) {
+    try {
+      const { error } =
+        await supabase
+          .from('task_comments')
+          .insert({
+            id: genId(),
+            task_id: taskId,
+            author: session.displayName,
+            text,
+          });
+
+      if (error) throw error;
+
+      await loadData();
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'ajouter le commentaire."
       );
     }
   }
@@ -3007,7 +3446,9 @@ export default function MeleeApp() {
 
       Object.keys(tasksByDate).forEach((date) => {
         const filtered = tasksByDate[date].filter(
-          (task) => task.assignee === filterMember
+          (task) =>
+            task.assignees &&
+            task.assignees.includes(filterMember)
         );
 
         if (filtered.length) {
@@ -3650,6 +4091,9 @@ export default function MeleeApp() {
                               project
                             }
                             tasks={tasks}
+                            getMemberColor={
+                              getMemberColor
+                            }
                             onClick={() =>
                               setSelectedProjectId(
                                 project.id
@@ -3742,6 +4186,41 @@ export default function MeleeApp() {
                     </p>
                   )}
 
+                  {selectedProject.assignees &&
+                    selectedProject.assignees.length >
+                      0 && (
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {selectedProject.assignees.map(
+                          (name) => (
+                            <span
+                              key={name}
+                              className="pill"
+                              style={{
+                                background:
+                                  'var(--chalk)',
+                                color: 'var(--ink)',
+                              }}
+                            >
+                              <span
+                                style={{
+                                  width: 8,
+                                  height: 8,
+                                  borderRadius: '50%',
+                                  background:
+                                    getMemberColor(
+                                      name
+                                    ),
+                                  display:
+                                    'inline-block',
+                                }}
+                              />
+                              {name}
+                            </span>
+                          )
+                        )}
+                      </div>
+                    )}
+
                   <div className="pitch-divider" />
 
                   <h2 className="font-display text-lg">
@@ -3765,11 +4244,17 @@ export default function MeleeApp() {
                       <TaskRow
                         key={task.id}
                         task={task}
+                        getMemberColor={
+                          getMemberColor
+                        }
                         onToggleStatus={
                           toggleTaskStatus
                         }
                         onDelete={
                           deleteTask
+                        }
+                        onEdit={
+                          setEditingTask
                         }
                       />
                     )
@@ -3926,11 +4411,17 @@ export default function MeleeApp() {
                             <TaskRow
                               key={task.id}
                               task={task}
+                              getMemberColor={
+                                getMemberColor
+                              }
                               onToggleStatus={
                                 toggleTaskStatus
                               }
                               onDelete={
                                 deleteTask
+                              }
+                              onEdit={
+                                setEditingTask
                               }
                             />
                           )
@@ -4085,8 +4576,10 @@ export default function MeleeApp() {
                             'termine' &&
                           t.dueDate &&
                           (!filterMember ||
-                            t.assignee ===
-                              filterMember)
+                            (t.assignees &&
+                              t.assignees.includes(
+                                filterMember
+                              )))
                       )
                       .sort((a, b) =>
                         a.dueDate.localeCompare(
@@ -4097,11 +4590,17 @@ export default function MeleeApp() {
                         <TaskRow
                           key={task.id}
                           task={task}
+                          getMemberColor={
+                            getMemberColor
+                          }
                           onToggleStatus={
                             toggleTaskStatus
                           }
                           onDelete={
                             deleteTask
+                          }
+                          onEdit={
+                            setEditingTask
                           }
                         />
                       ))}
@@ -4307,6 +4806,7 @@ export default function MeleeApp() {
       {showProjectForm && (
         <ProjectFormModal
           initial={editingProject}
+          users={users}
           onSubmit={saveProject}
           onCancel={() => {
             setShowProjectForm(
@@ -4365,6 +4865,24 @@ export default function MeleeApp() {
           onCancel={() =>
             setShowEventForm(false)
           }
+        />
+      )}
+
+      {/* MODIFIER TACHE */}
+
+      {editingTask && (
+        <TaskEditModal
+          task={editingTask}
+          users={users}
+          comments={taskComments.filter(
+            (c) => c.taskId === editingTask.id
+          )}
+          currentUserDisplayName={
+            session.displayName
+          }
+          onSave={updateTask}
+          onAddComment={addTaskComment}
+          onCancel={() => setEditingTask(null)}
         />
       )}
 
