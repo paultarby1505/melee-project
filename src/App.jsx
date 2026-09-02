@@ -41,6 +41,8 @@ import {
   ExternalLink,
   Link2,
   Unlink,
+  ClipboardList,
+  Star,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -131,6 +133,120 @@ const TABS = [
   { id: 'cycles', label: 'Cycles rugby', icon: Dumbbell, stub: true },
   { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'docs', label: 'Documents', icon: FileText },
+  {
+    id: 'evaluations',
+    label: 'Évaluations',
+    icon: ClipboardList,
+  },
+];
+
+const PLAYER_CATEGORIES = [
+  'U6',
+  'U8',
+  'U10',
+  'U12',
+  'U14',
+];
+
+const EVAL_THEMES = [
+  {
+    id: 'passe',
+    label: 'Passe',
+    subcategories: [
+      { id: 'passe_droite', label: 'Passe à droite' },
+      { id: 'passe_gauche', label: 'Passe à gauche' },
+      {
+        id: 'passe_precision',
+        label: "Précision / vitesse d'exécution",
+      },
+      {
+        id: 'passe_pression',
+        label: 'Passe sous pression',
+      },
+    ],
+  },
+  {
+    id: 'physique',
+    label: 'Qualité physique',
+    subcategories: [
+      { id: 'phys_vitesse', label: 'Vitesse' },
+      { id: 'phys_endurance', label: 'Endurance' },
+      { id: 'phys_force', label: 'Force / puissance' },
+      {
+        id: 'phys_agilite',
+        label: 'Agilité / coordination',
+      },
+    ],
+  },
+  {
+    id: 'defense',
+    label: 'Défense',
+    subcategories: [
+      { id: 'def_plaquage', label: 'Plaquage' },
+      {
+        id: 'def_placement',
+        label: 'Placement défensif',
+      },
+      { id: 'def_anticipation', label: 'Anticipation' },
+      {
+        id: 'def_engagement',
+        label: 'Engagement / intensité',
+      },
+    ],
+  },
+  {
+    id: 'posture',
+    label: 'Posture',
+    subcategories: [
+      {
+        id: 'pos_positions',
+        label: 'Positions sécuritaires',
+      },
+      {
+        id: 'pos_attitude',
+        label: 'Attitude de sécurité',
+      },
+      {
+        id: 'pos_gestes',
+        label: 'Maîtrise des gestes',
+      },
+    ],
+  },
+  {
+    id: 'attaque',
+    label: 'Attaque',
+    subcategories: [
+      {
+        id: 'att_espace',
+        label: "Prise d'espace / course",
+      },
+      {
+        id: 'att_percussion',
+        label: 'Percussion / franchissement',
+      },
+      { id: 'att_soutien', label: 'Soutien de jeu' },
+      {
+        id: 'att_decision',
+        label: 'Prise de décision en attaque',
+      },
+    ],
+  },
+  {
+    id: 'cognitif',
+    label: 'Cognitif',
+    subcategories: [
+      { id: 'cog_lecture', label: 'Lecture du jeu' },
+      { id: 'cog_decision', label: 'Prise de décision' },
+      {
+        id: 'cog_systemes',
+        label: 'Compréhension des systèmes de jeu',
+      },
+      {
+        id: 'cog_concentration',
+        label: 'Concentration',
+      },
+    ],
+  },
 ];
 
 const STUB_CONTENT = {
@@ -327,6 +443,35 @@ function isOnline(user) {
       new Date(user.lastSeen).getTime() <
     ONLINE_THRESHOLD_MS
   );
+}
+
+function getThemeAverage(scores, theme) {
+  const values = theme.subcategories.map(
+    (sub) => scores[sub.id] || 0
+  );
+
+  const sum = values.reduce((a, b) => a + b, 0);
+
+  return values.length ? sum / values.length : 0;
+}
+
+function getThemeAverages(scores) {
+  return EVAL_THEMES.map((theme) => ({
+    id: theme.id,
+    label: theme.label,
+    value: getThemeAverage(scores || {}, theme),
+  }));
+}
+
+function getOverallAverage(scores) {
+  const averages = getThemeAverages(scores);
+
+  const sum = averages.reduce(
+    (a, t) => a + t.value,
+    0
+  );
+
+  return averages.length ? sum / averages.length : 0;
 }
 
 /* =========================================================
@@ -2927,6 +3072,393 @@ function WeekView({
   );
 }
 
+function RadarChart({ data, size = 260 }) {
+  const center = size / 2;
+  const maxRadius = size / 2 - 44;
+  const levels = 5;
+  const angleStep = (2 * Math.PI) / data.length;
+
+  function pointFor(index, value) {
+    const angle = -Math.PI / 2 + index * angleStep;
+    const r = (value / 5) * maxRadius;
+
+    return {
+      x: center + r * Math.cos(angle),
+      y: center + r * Math.sin(angle),
+    };
+  }
+
+  const dataPoints = data.map((d, i) =>
+    pointFor(i, d.value)
+  );
+
+  const dataPath = dataPoints
+    .map((p) => `${p.x},${p.y}`)
+    .join(' ');
+
+  const gridPolygons = Array.from(
+    { length: levels },
+    (_, levelIdx) => {
+      const levelValue =
+        ((levelIdx + 1) / levels) * 5;
+
+      return data
+        .map((_, i) => pointFor(i, levelValue))
+        .map((p) => `${p.x},${p.y}`)
+        .join(' ');
+    }
+  );
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+    >
+      {gridPolygons.map((poly, i) => (
+        <polygon
+          key={i}
+          points={poly}
+          fill="none"
+          stroke="var(--line)"
+          strokeWidth="1"
+        />
+      ))}
+
+      {data.map((_, i) => {
+        const outer = pointFor(i, 5);
+
+        return (
+          <line
+            key={i}
+            x1={center}
+            y1={center}
+            x2={outer.x}
+            y2={outer.y}
+            stroke="var(--line)"
+            strokeWidth="1"
+          />
+        );
+      })}
+
+      <polygon
+        points={dataPath}
+        fill="var(--pitch)"
+        fillOpacity="0.35"
+        stroke="var(--pitch-dark)"
+        strokeWidth="2"
+      />
+
+      {dataPoints.map((p, i) => (
+        <circle
+          key={i}
+          cx={p.x}
+          cy={p.y}
+          r="3"
+          fill="var(--pitch-dark)"
+        />
+      ))}
+
+      {data.map((d, i) => {
+        const labelPoint = pointFor(i, 6.4);
+
+        return (
+          <text
+            key={i}
+            x={labelPoint.x}
+            y={labelPoint.y}
+            fontSize="11"
+            fontWeight="600"
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fill="var(--ink)"
+          >
+            {d.label}
+          </text>
+        );
+      })}
+    </svg>
+  );
+}
+
+function StarPicker({ value, onChange }) {
+  return (
+    <div className="flex gap-1">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          type="button"
+          key={n}
+          onClick={() => onChange(n)}
+          style={{
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: 2,
+          }}
+        >
+          <Star
+            size={18}
+            fill={
+              n <= value ? 'var(--pitch)' : 'none'
+            }
+            color={
+              n <= value
+                ? 'var(--pitch)'
+                : 'var(--line)'
+            }
+          />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PlayerFormModal({ onSubmit, onCancel }) {
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [age, setAge] = useState('');
+  const [category, setCategory] = useState(
+    PLAYER_CATEGORIES[0]
+  );
+  const [error, setError] = useState('');
+
+  function submit() {
+    if (!firstName.trim() || !lastName.trim()) {
+      setError(
+        'Le nom et le prénom sont obligatoires.'
+      );
+      return;
+    }
+
+    onSubmit({
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      age: age ? Number(age) : null,
+      category,
+    });
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          Nouveau joueur
+        </h3>
+
+        <div
+          className="mt-4"
+          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+        >
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label>Prénom</label>
+              <input
+                value={firstName}
+                onChange={(e) =>
+                  setFirstName(e.target.value)
+                }
+                autoFocus
+              />
+            </div>
+
+            <div>
+              <label>Nom</label>
+              <input
+                value={lastName}
+                onChange={(e) =>
+                  setLastName(e.target.value)
+                }
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label>Âge</label>
+              <input
+                type="number"
+                min="0"
+                value={age}
+                onChange={(e) =>
+                  setAge(e.target.value)
+                }
+              />
+            </div>
+
+            <div>
+              <label>Catégorie</label>
+              <select
+                value={category}
+                onChange={(e) =>
+                  setCategory(e.target.value)
+                }
+              >
+                {PLAYER_CATEGORIES.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {error && (
+            <p className="text-xs" style={{ color: 'var(--red)' }}>
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            Créer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EvaluationFormModal({
+  player,
+  onSubmit,
+  onCancel,
+}) {
+  const [scores, setScores] = useState({});
+  const [busy, setBusy] = useState(false);
+
+  function setScore(subId, value) {
+    setScores((prev) => ({
+      ...prev,
+      [subId]: value,
+    }));
+  }
+
+  const allRated = EVAL_THEMES.every((theme) =>
+    theme.subcategories.every(
+      (sub) => scores[sub.id]
+    )
+  );
+
+  async function submit() {
+    setBusy(true);
+    await onSubmit(scores);
+    setBusy(false);
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        style={{
+          maxWidth: 560,
+          maxHeight: '85vh',
+          overflowY: 'auto',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          Nouvelle évaluation
+        </h3>
+
+        <p
+          className="text-sm"
+          style={{ color: 'var(--ink-light)' }}
+        >
+          {player.firstName} {player.lastName} ·{' '}
+          {player.category}
+        </p>
+
+        {EVAL_THEMES.map((theme) => (
+          <div key={theme.id} className="mt-4">
+            <h4 className="font-display text-sm">
+              {theme.label}
+            </h4>
+
+            <div
+              style={{
+                borderTop: '1px solid var(--line)',
+                marginTop: 4,
+              }}
+            >
+              {theme.subcategories.map((sub) => (
+                <div
+                  key={sub.id}
+                  className="flex items-center justify-between py-2"
+                  style={{
+                    borderBottom:
+                      '1px solid var(--line)',
+                  }}
+                >
+                  <span className="text-sm">
+                    {sub.label}
+                  </span>
+
+                  <StarPicker
+                    value={scores[sub.id] || 0}
+                    onChange={(v) =>
+                      setScore(sub.id, v)
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        {!allRated && (
+          <p
+            className="text-xs mt-3"
+            style={{ color: 'var(--ink-light)' }}
+          >
+            Note chaque sous-catégorie pour
+            enregistrer l'évaluation.
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button
+            className="btn-primary"
+            onClick={submit}
+            disabled={busy || !allRated}
+          >
+            {busy
+              ? 'Enregistrement…'
+              : "Enregistrer l'évaluation"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* =========================================================
    APP
 ========================================================= */
@@ -3050,6 +3582,24 @@ export default function MeleeApp() {
   const [docFolderFilter, setDocFolderFilter] =
     useState('all');
 
+  const [players, setPlayers] = useState([]);
+
+  const [evaluations, setEvaluations] = useState(
+    []
+  );
+
+  const [showPlayerForm, setShowPlayerForm] =
+    useState(false);
+
+  const [selectedPlayerId, setSelectedPlayerId] =
+    useState(null);
+
+  const [showEvaluationForm, setShowEvaluationForm] =
+    useState(false);
+
+  const [viewingEvaluationId, setViewingEvaluationId] =
+    useState(null);
+
   /* =====================================================
      TOAST
   ===================================================== */
@@ -3077,6 +3627,8 @@ export default function MeleeApp() {
         messagesResult,
         docFoldersResult,
         documentsResult,
+        playersResult,
+        evaluationsResult,
       ] = await Promise.all([
         supabase
           .from('users')
@@ -3134,6 +3686,20 @@ export default function MeleeApp() {
           .order('created_at', {
             ascending: false,
           }),
+
+        supabase
+          .from('players')
+          .select('*')
+          .order('created_at', {
+            ascending: true,
+          }),
+
+        supabase
+          .from('evaluations')
+          .select('*')
+          .order('created_at', {
+            ascending: true,
+          }),
       ]);
 
       if (usersResult.error)
@@ -3159,6 +3725,12 @@ export default function MeleeApp() {
 
       if (documentsResult.error)
         throw documentsResult.error;
+
+      if (playersResult.error)
+        throw playersResult.error;
+
+      if (evaluationsResult.error)
+        throw evaluationsResult.error;
 
       setUsers(
         (usersResult.data || []).map(
@@ -3275,6 +3847,32 @@ export default function MeleeApp() {
             taskId: d.task_id,
             uploadedBy: d.uploaded_by || '',
             createdAt: d.created_at,
+          })
+        )
+      );
+
+      setPlayers(
+        (playersResult.data || []).map(
+          (p) => ({
+            id: p.id,
+            firstName: p.first_name,
+            lastName: p.last_name,
+            age: p.age,
+            category: p.category,
+            createdBy: p.created_by || '',
+            createdAt: p.created_at,
+          })
+        )
+      );
+
+      setEvaluations(
+        (evaluationsResult.data || []).map(
+          (e) => ({
+            id: e.id,
+            playerId: e.player_id,
+            scores: e.scores || {},
+            evaluatedBy: e.evaluated_by || '',
+            createdAt: e.created_at,
           })
         )
       );
@@ -4296,6 +4894,116 @@ export default function MeleeApp() {
   }
 
   /* =====================================================
+     EVALUATIONS
+  ===================================================== */
+
+  async function createPlayer(data) {
+    try {
+      const id = genId();
+
+      const { error } =
+        await supabase
+          .from('players')
+          .insert({
+            id,
+            first_name: data.firstName,
+            last_name: data.lastName,
+            age: data.age,
+            category: data.category,
+            created_by: session.displayName,
+          });
+
+      if (error) throw error;
+
+      await loadData();
+
+      setShowPlayerForm(false);
+      setSelectedPlayerId(id);
+
+      showToast('Joueur créé.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de créer le joueur.'
+      );
+    }
+  }
+
+  async function deletePlayer(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('players')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      setSelectedPlayerId(null);
+
+      await loadData();
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de supprimer le joueur.'
+      );
+    }
+  }
+
+  async function createEvaluation(playerId, scores) {
+    try {
+      const { error } =
+        await supabase
+          .from('evaluations')
+          .insert({
+            id: genId(),
+            player_id: playerId,
+            scores,
+            evaluated_by: session.displayName,
+          });
+
+      if (error) throw error;
+
+      await loadData();
+
+      setShowEvaluationForm(false);
+      setViewingEvaluationId(null);
+
+      showToast('Évaluation enregistrée.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'enregistrer l'évaluation."
+      );
+    }
+  }
+
+  async function deleteEvaluation(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('evaluations')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      setViewingEvaluationId(null);
+
+      await loadData();
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible de supprimer l'évaluation."
+      );
+    }
+  }
+
+  /* =====================================================
      NAVIGATION
   ===================================================== */
 
@@ -4303,6 +5011,8 @@ export default function MeleeApp() {
     setActiveTab(id);
     setSelectedProjectId(null);
     setSelectedDay(null);
+    setSelectedPlayerId(null);
+    setViewingEvaluationId(null);
   }
 
   function getProject(id) {
@@ -4543,6 +5253,30 @@ export default function MeleeApp() {
     docSearch,
     docSort,
   ]);
+
+  const selectedPlayer = selectedPlayerId
+    ? players.find(
+        (p) => p.id === selectedPlayerId
+      )
+    : null;
+
+  const playerEvaluations = useMemo(
+    () =>
+      evaluations
+        .filter(
+          (e) => e.playerId === selectedPlayerId
+        )
+        .sort((a, b) =>
+          b.createdAt.localeCompare(a.createdAt)
+        ),
+    [evaluations, selectedPlayerId]
+  );
+
+  const viewingEvaluation = viewingEvaluationId
+    ? playerEvaluations.find(
+        (e) => e.id === viewingEvaluationId
+      ) || playerEvaluations[0]
+    : playerEvaluations[0];
 
   const now = new Date();
 
@@ -6422,6 +7156,362 @@ export default function MeleeApp() {
               </div>
             )}
 
+            {/* EVALUATIONS */}
+
+            {activeTab === 'evaluations' &&
+              !selectedPlayer && (
+                <div>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <h1 className="font-display text-2xl">
+                      Évaluations
+                    </h1>
+
+                    <button
+                      className="btn-primary"
+                      onClick={() =>
+                        setShowPlayerForm(true)
+                      }
+                    >
+                      <Plus size={14} />
+                      Nouveau joueur
+                    </button>
+                  </div>
+
+                  <div className="pitch-divider" />
+
+                  {players.length === 0 ? (
+                    <p
+                      className="text-sm"
+                      style={{
+                        color: 'var(--ink-light)',
+                      }}
+                    >
+                      Aucun joueur pour l'instant.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {players.map((player) => {
+                        const playerEvals =
+                          evaluations.filter(
+                            (e) =>
+                              e.playerId ===
+                              player.id
+                          );
+
+                        const latest = [
+                          ...playerEvals,
+                        ].sort((a, b) =>
+                          b.createdAt.localeCompare(
+                            a.createdAt
+                          )
+                        )[0];
+
+                        const overall = latest
+                          ? getOverallAverage(
+                              latest.scores
+                            )
+                          : null;
+
+                        return (
+                          <div
+                            key={player.id}
+                            className="card"
+                            onClick={() =>
+                              setSelectedPlayerId(
+                                player.id
+                              )
+                            }
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <h3 className="font-display text-lg">
+                                {player.firstName}{' '}
+                                {player.lastName}
+                              </h3>
+
+                              <span
+                                className="pill"
+                                style={{
+                                  background:
+                                    'var(--chalk)',
+                                  color: 'var(--ink)',
+                                }}
+                              >
+                                {player.category}
+                              </span>
+                            </div>
+
+                            <p
+                              className="text-xs mt-1"
+                              style={{
+                                color:
+                                  'var(--ink-light)',
+                              }}
+                            >
+                              {player.age
+                                ? `${player.age} ans · `
+                                : ''}
+                              {playerEvals.length}{' '}
+                              évaluation
+                              {playerEvals.length > 1
+                                ? 's'
+                                : ''}
+                            </p>
+
+                            {overall !== null && (
+                              <p
+                                className="score mt-3"
+                                style={{
+                                  color:
+                                    'var(--pitch-dark)',
+                                }}
+                              >
+                                {overall.toFixed(1)}
+                                <span
+                                  style={{
+                                    color:
+                                      'var(--ink-light)',
+                                    fontWeight: 400,
+                                    fontSize: 14,
+                                  }}
+                                >
+                                  {' '}
+                                  / 5
+                                </span>
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+            {activeTab === 'evaluations' &&
+              selectedPlayer && (
+                <div>
+                  <button
+                    className="btn-secondary"
+                    onClick={() =>
+                      setSelectedPlayerId(null)
+                    }
+                  >
+                    <ChevronLeft size={14} />
+                    Joueurs
+                  </button>
+
+                  <div className="flex items-start justify-between mt-4 flex-wrap gap-2">
+                    <div>
+                      <h1 className="font-display text-2xl">
+                        {selectedPlayer.firstName}{' '}
+                        {selectedPlayer.lastName}
+                      </h1>
+
+                      <p
+                        className="text-sm mt-1"
+                        style={{
+                          color: 'var(--ink-light)',
+                        }}
+                      >
+                        {selectedPlayer.category}
+                        {selectedPlayer.age
+                          ? ` · ${selectedPlayer.age} ans`
+                          : ''}
+                      </p>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        className="btn-primary"
+                        onClick={() =>
+                          setShowEvaluationForm(
+                            true
+                          )
+                        }
+                      >
+                        <Plus size={14} />
+                        Nouvelle évaluation
+                      </button>
+
+                      <button
+                        className="icon-btn"
+                        onClick={() =>
+                          setConfirmState({
+                            message: `Supprimer ${selectedPlayer.firstName} ${selectedPlayer.lastName} et toutes ses évaluations ?`,
+                            onConfirm:
+                              async () => {
+                                await deletePlayer(
+                                  selectedPlayer.id
+                                );
+
+                                setConfirmState(
+                                  null
+                                );
+                              },
+                          })
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pitch-divider" />
+
+                  {playerEvaluations.length === 0 ? (
+                    <p
+                      className="text-sm"
+                      style={{
+                        color: 'var(--ink-light)',
+                      }}
+                    >
+                      Aucune évaluation pour
+                      l'instant.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="flex flex-col items-center">
+                        <RadarChart
+                          data={getThemeAverages(
+                            viewingEvaluation.scores
+                          )}
+                        />
+
+                        <p
+                          className="score"
+                          style={{
+                            color:
+                              'var(--pitch-dark)',
+                          }}
+                        >
+                          {getOverallAverage(
+                            viewingEvaluation.scores
+                          ).toFixed(1)}
+                          <span
+                            style={{
+                              color:
+                                'var(--ink-light)',
+                              fontWeight: 400,
+                              fontSize: 14,
+                            }}
+                          >
+                            {' '}
+                            / 5
+                          </span>
+                        </p>
+
+                        <p
+                          className="text-xs"
+                          style={{
+                            color: 'var(--ink-light)',
+                          }}
+                        >
+                          Évalué par{' '}
+                          {
+                            viewingEvaluation.evaluatedBy
+                          }{' '}
+                          le{' '}
+                          {formatDateFR(
+                            viewingEvaluation.createdAt.slice(
+                              0,
+                              10
+                            )
+                          )}
+                        </p>
+                      </div>
+
+                      <h2 className="font-display text-lg mt-6">
+                        Historique
+                      </h2>
+
+                      {playerEvaluations.map(
+                        (ev) => (
+                          <div
+                            key={ev.id}
+                            className="flex items-center justify-between py-2"
+                            style={{
+                              borderBottom:
+                                '1px solid var(--line)',
+                              cursor: 'pointer',
+                              background:
+                                viewingEvaluation.id ===
+                                ev.id
+                                  ? 'var(--pitch-tint)'
+                                  : 'transparent',
+                            }}
+                            onClick={() =>
+                              setViewingEvaluationId(
+                                ev.id
+                              )
+                            }
+                          >
+                            <div>
+                              <p className="text-sm font-medium">
+                                {formatDateFR(
+                                  ev.createdAt.slice(
+                                    0,
+                                    10
+                                  )
+                                )}
+                              </p>
+
+                              <p
+                                className="text-xs"
+                                style={{
+                                  color:
+                                    'var(--ink-light)',
+                                }}
+                              >
+                                Par {ev.evaluatedBy}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="score"
+                                style={{
+                                  fontSize: 16,
+                                  color:
+                                    'var(--pitch-dark)',
+                                }}
+                              >
+                                {getOverallAverage(
+                                  ev.scores
+                                ).toFixed(1)}
+                              </span>
+
+                              <button
+                                className="icon-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+
+                                  setConfirmState({
+                                    message:
+                                      'Supprimer cette évaluation ?',
+                                    onConfirm:
+                                      async () => {
+                                        await deleteEvaluation(
+                                          ev.id
+                                        );
+
+                                        setConfirmState(
+                                          null
+                                        );
+                                      },
+                                  });
+                                }}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
             {/* PAGES EN CONSTRUCTION */}
 
             {[
@@ -6630,6 +7720,34 @@ export default function MeleeApp() {
           tasks={tasks}
           onSubmit={reclassifyDocument}
           onCancel={() => setReclassifyDoc(null)}
+        />
+      )}
+
+      {/* NOUVEAU JOUEUR */}
+
+      {showPlayerForm && (
+        <PlayerFormModal
+          onSubmit={createPlayer}
+          onCancel={() =>
+            setShowPlayerForm(false)
+          }
+        />
+      )}
+
+      {/* NOUVELLE EVALUATION */}
+
+      {showEvaluationForm && selectedPlayer && (
+        <EvaluationFormModal
+          player={selectedPlayer}
+          onSubmit={(scores) =>
+            createEvaluation(
+              selectedPlayer.id,
+              scores
+            )
+          }
+          onCancel={() =>
+            setShowEvaluationForm(false)
+          }
         />
       )}
 
