@@ -34,6 +34,13 @@ import {
   EyeOff,
   RefreshCw,
   Send,
+  Search,
+  Folder,
+  FolderPlus,
+  Upload,
+  ExternalLink,
+  Link2,
+  Unlink,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -123,7 +130,7 @@ const TABS = [
   { id: 'planning', label: 'Planning', icon: CalendarDays },
   { id: 'cycles', label: 'Cycles rugby', icon: Dumbbell, stub: true },
   { id: 'chat', label: 'Chat', icon: MessageSquare },
-  { id: 'docs', label: 'Documents', icon: FileText, stub: true },
+  { id: 'docs', label: 'Documents', icon: FileText },
 ];
 
 const STUB_CONTENT = {
@@ -132,12 +139,6 @@ const STUB_CONTENT = {
     title: 'Cycles rugby',
     description:
       "La gestion des cycles d'entraînement arrivera dans une prochaine itération.",
-  },
-  docs: {
-    icon: FileText,
-    title: 'Documents',
-    description:
-      'Le dépôt de documents et de liens partagés arrivera dans une prochaine itération.',
   },
 };
 
@@ -292,6 +293,18 @@ function getWeekDays(anchorDate) {
 function getDmChannel(usernameA, usernameB) {
   return 'dm:' + [usernameA, usernameB].sort().join(':');
 }
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 Ko';
+
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)} Ko`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+}
+
+const MAX_DOCUMENT_SIZE = 20 * 1024 * 1024;
 
 function mapMessageRow(m) {
   return {
@@ -1183,9 +1196,14 @@ function TaskEditModal({
   task,
   users,
   comments,
-  currentUserDisplayName,
+  taskDocuments,
+  linkableDocuments,
+  getDocumentUrl,
   onSave,
   onAddComment,
+  onLinkDocument,
+  onUnlinkDocument,
+  onOpenDocumentUpload,
   onCancel,
 }) {
   const [title, setTitle] = useState(
@@ -1206,6 +1224,8 @@ function TaskEditModal({
 
   const [commentText, setCommentText] =
     useState('');
+
+  const [linkDocId, setLinkDocId] = useState('');
 
   const [error, setError] = useState('');
 
@@ -1398,7 +1418,573 @@ function TaskEditModal({
             </button>
           </div>
         </div>
+
+        <div
+          className="mt-5"
+          style={{
+            paddingTop: 14,
+            borderTop: '1px solid var(--line)',
+          }}
+        >
+          <div className="flex items-center justify-between">
+            <h4 className="font-display text-sm">
+              Documents
+            </h4>
+
+            {onOpenDocumentUpload && (
+              <button
+                className="btn-secondary"
+                onClick={onOpenDocumentUpload}
+              >
+                <Upload size={12} />
+                Ajouter
+              </button>
+            )}
+          </div>
+
+          {taskDocuments.length === 0 ? (
+            <p
+              className="text-xs mt-2"
+              style={{ color: 'var(--ink-light)' }}
+            >
+              Aucun document lié.
+            </p>
+          ) : (
+            <div className="mt-2">
+              {taskDocuments.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="flex items-center gap-2 py-1"
+                >
+                  <FileText size={13} />
+
+                  <a
+                    className="text-sm flex-1 min-w-0 truncate"
+                    href={getDocumentUrl(doc)}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: 'var(--ink)' }}
+                  >
+                    {doc.name}
+                  </a>
+
+                  <button
+                    className="icon-btn"
+                    title="Délier de la tâche"
+                    onClick={() =>
+                      onUnlinkDocument(doc.id)
+                    }
+                  >
+                    <Unlink size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {linkableDocuments.length > 0 && (
+            <div className="flex gap-2 mt-2">
+              <select
+                style={{ flex: 1 }}
+                value={linkDocId}
+                onChange={(e) =>
+                  setLinkDocId(e.target.value)
+                }
+              >
+                <option value="">
+                  Lier un document du projet…
+                </option>
+                {linkableDocuments.map((doc) => (
+                  <option key={doc.id} value={doc.id}>
+                    {doc.name}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                className="btn-secondary"
+                disabled={!linkDocId}
+                onClick={() => {
+                  onLinkDocument(linkDocId);
+                  setLinkDocId('');
+                }}
+              >
+                <Link2 size={12} />
+                Lier
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function DocumentPlacementFields({
+  folders,
+  projects,
+  tasks,
+  folderId,
+  setFolderId,
+  projectId,
+  setProjectId,
+  taskId,
+  setTaskId,
+}) {
+  const projectTasks = projectId
+    ? tasks.filter((t) => t.projectId === projectId)
+    : [];
+
+  return (
+    <>
+      <div>
+        <label>Dossier</label>
+        <select
+          value={folderId || ''}
+          onChange={(e) =>
+            setFolderId(e.target.value || null)
+          }
+        >
+          <option value="">Non classé</option>
+          {folders.map((folder) => (
+            <option key={folder.id} value={folder.id}>
+              {folder.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label>Projet (optionnel)</label>
+        <select
+          value={projectId || ''}
+          onChange={(e) => {
+            setProjectId(e.target.value || null);
+            setTaskId(null);
+          }}
+        >
+          <option value="">Aucun projet</option>
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {projectId && (
+        <div>
+          <label>Tâche (optionnel)</label>
+          <select
+            value={taskId || ''}
+            onChange={(e) =>
+              setTaskId(e.target.value || null)
+            }
+          >
+            <option value="">Aucune tâche</option>
+            {projectTasks.map((task) => (
+              <option key={task.id} value={task.id}>
+                {task.title}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+    </>
+  );
+}
+
+function FolderFormModal({ onSubmit, onCancel }) {
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+
+  function submit() {
+    if (!name.trim()) {
+      setError('Le nom est obligatoire.');
+      return;
+    }
+
+    onSubmit(name.trim());
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          Nouveau dossier
+        </h3>
+
+        <div className="mt-4">
+          <label>Nom du dossier</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+            placeholder="Ex. Trésorerie"
+            onKeyDown={(e) =>
+              e.key === 'Enter' && submit()
+            }
+          />
+
+          {error && (
+            <p
+              className="text-xs mt-1"
+              style={{ color: 'var(--red)' }}
+            >
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            Créer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DocumentUploadModal({
+  folders,
+  projects,
+  tasks,
+  initialFolderId,
+  initialProjectId,
+  initialTaskId,
+  onSubmit,
+  onCancel,
+}) {
+  const [file, setFile] = useState(null);
+  const [name, setName] = useState('');
+  const [folderId, setFolderId] = useState(
+    initialFolderId || null
+  );
+  const [projectId, setProjectId] = useState(
+    initialProjectId || null
+  );
+  const [taskId, setTaskId] = useState(
+    initialTaskId || null
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  function handleFileChange(e) {
+    const selected = e.target.files?.[0];
+
+    if (!selected) return;
+
+    if (selected.size > MAX_DOCUMENT_SIZE) {
+      setError('Le fichier dépasse 20 Mo.');
+      return;
+    }
+
+    setError('');
+    setFile(selected);
+
+    if (!name) {
+      setName(selected.name);
+    }
+  }
+
+  async function submit() {
+    if (!file) {
+      setError('Choisis un fichier.');
+      return;
+    }
+
+    if (!name.trim()) {
+      setError('Le nom est obligatoire.');
+      return;
+    }
+
+    setBusy(true);
+
+    await onSubmit({
+      file,
+      name: name.trim(),
+      folderId,
+      projectId,
+      taskId,
+    });
+
+    setBusy(false);
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          Ajouter un document
+        </h3>
+
+        <div
+          className="mt-4"
+          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+        >
+          <div>
+            <label>Fichier (20 Mo max)</label>
+            <input
+              type="file"
+              onChange={handleFileChange}
+            />
+          </div>
+
+          <div>
+            <label>Nom affiché</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ex. Règlement intérieur"
+            />
+          </div>
+
+          <DocumentPlacementFields
+            folders={folders}
+            projects={projects}
+            tasks={tasks}
+            folderId={folderId}
+            setFolderId={setFolderId}
+            projectId={projectId}
+            setProjectId={setProjectId}
+            taskId={taskId}
+            setTaskId={setTaskId}
+          />
+
+          {error && (
+            <p className="text-xs" style={{ color: 'var(--red)' }}>
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button
+            className="btn-primary"
+            onClick={submit}
+            disabled={busy}
+          >
+            {busy ? 'Envoi…' : 'Ajouter'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DocumentReclassifyModal({
+  document,
+  folders,
+  projects,
+  tasks,
+  onSubmit,
+  onCancel,
+}) {
+  const [folderId, setFolderId] = useState(
+    document.folderId
+  );
+  const [projectId, setProjectId] = useState(
+    document.projectId
+  );
+  const [taskId, setTaskId] = useState(
+    document.taskId
+  );
+
+  function submit() {
+    onSubmit(document.id, {
+      folderId,
+      projectId,
+      taskId,
+    });
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          Ranger "{document.name}"
+        </h3>
+
+        <div
+          className="mt-4"
+          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+        >
+          <DocumentPlacementFields
+            folders={folders}
+            projects={projects}
+            tasks={tasks}
+            folderId={folderId}
+            setFolderId={setFolderId}
+            projectId={projectId}
+            setProjectId={setProjectId}
+            taskId={taskId}
+            setTaskId={setTaskId}
+          />
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            Enregistrer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DocumentRow({
+  doc,
+  folders,
+  projects,
+  getDocumentUrl,
+  onReclassify,
+  onDelete,
+  compact,
+}) {
+  const folder = folders.find(
+    (f) => f.id === doc.folderId
+  );
+
+  const project = projects.find(
+    (p) => p.id === doc.projectId
+  );
+
+  const extension = (
+    doc.name.split('.').pop() || ''
+  ).toUpperCase();
+
+  return (
+    <div
+      className="flex items-center gap-3 py-2"
+      style={{ borderBottom: '1px solid var(--line)' }}
+    >
+      <div
+        style={{
+          width: 34,
+          height: 34,
+          borderRadius: 8,
+          background: 'var(--chalk)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <FileText size={16} />
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate">
+          {doc.name}
+        </p>
+
+        <div className="flex items-center gap-2 flex-wrap mt-1">
+          <span
+            className="text-xs"
+            style={{ color: 'var(--ink-light)' }}
+          >
+            {extension} · {formatBytes(doc.size)}
+          </span>
+
+          {!compact && folder && (
+            <span
+              className="pill"
+              style={{
+                background: 'var(--chalk)',
+                color: 'var(--ink-light)',
+              }}
+            >
+              <Folder size={10} />
+              {folder.name}
+            </span>
+          )}
+
+          {!compact && project && (
+            <span
+              className="pill"
+              style={{
+                background: 'var(--chalk)',
+                color: 'var(--ink-light)',
+              }}
+            >
+              {project.name}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <a
+        className="icon-btn"
+        href={getDocumentUrl(doc)}
+        target="_blank"
+        rel="noreferrer"
+      >
+        <ExternalLink size={14} />
+      </a>
+
+      {onReclassify && (
+        <button
+          className="icon-btn"
+          onClick={() => onReclassify(doc)}
+        >
+          <Pencil size={14} />
+        </button>
+      )}
+
+      {onDelete && (
+        <button
+          className="icon-btn"
+          onClick={() => onDelete(doc)}
+        >
+          <Trash2 size={14} />
+        </button>
+      )}
     </div>
   );
 }
@@ -2443,6 +3029,27 @@ export default function MeleeApp() {
 
   const chatEndRef = useRef(null);
 
+  const [docFolders, setDocFolders] = useState([]);
+
+  const [documents, setDocuments] = useState([]);
+
+  const [showFolderForm, setShowFolderForm] =
+    useState(false);
+
+  const [showDocumentUpload, setShowDocumentUpload] =
+    useState(null);
+
+  const [reclassifyDoc, setReclassifyDoc] = useState(
+    null
+  );
+
+  const [docSearch, setDocSearch] = useState('');
+
+  const [docSort, setDocSort] = useState('recent');
+
+  const [docFolderFilter, setDocFolderFilter] =
+    useState('all');
+
   /* =====================================================
      TOAST
   ===================================================== */
@@ -2468,6 +3075,8 @@ export default function MeleeApp() {
         eventsResult,
         taskCommentsResult,
         messagesResult,
+        docFoldersResult,
+        documentsResult,
       ] = await Promise.all([
         supabase
           .from('users')
@@ -2511,6 +3120,20 @@ export default function MeleeApp() {
             ascending: true,
           })
           .limit(500),
+
+        supabase
+          .from('doc_folders')
+          .select('*')
+          .order('name', {
+            ascending: true,
+          }),
+
+        supabase
+          .from('documents')
+          .select('*')
+          .order('created_at', {
+            ascending: false,
+          }),
       ]);
 
       if (usersResult.error)
@@ -2530,6 +3153,12 @@ export default function MeleeApp() {
 
       if (messagesResult.error)
         throw messagesResult.error;
+
+      if (docFoldersResult.error)
+        throw docFoldersResult.error;
+
+      if (documentsResult.error)
+        throw documentsResult.error;
 
       setUsers(
         (usersResult.data || []).map(
@@ -2619,6 +3248,34 @@ export default function MeleeApp() {
       setMessages(
         (messagesResult.data || []).map(
           mapMessageRow
+        )
+      );
+
+      setDocFolders(
+        (docFoldersResult.data || []).map(
+          (f) => ({
+            id: f.id,
+            name: f.name,
+            createdBy: f.created_by || '',
+            createdAt: f.created_at,
+          })
+        )
+      );
+
+      setDocuments(
+        (documentsResult.data || []).map(
+          (d) => ({
+            id: d.id,
+            name: d.name,
+            storagePath: d.storage_path,
+            mimeType: d.mime_type || '',
+            size: d.size || 0,
+            folderId: d.folder_id,
+            projectId: d.project_id,
+            taskId: d.task_id,
+            uploadedBy: d.uploaded_by || '',
+            createdAt: d.created_at,
+          })
         )
       );
 
@@ -3466,6 +4123,179 @@ export default function MeleeApp() {
   }
 
   /* =====================================================
+     DOCUMENTS
+  ===================================================== */
+
+  async function createFolder(name) {
+    try {
+      const { error } =
+        await supabase
+          .from('doc_folders')
+          .insert({
+            id: genId(),
+            name,
+            created_by: session.displayName,
+          });
+
+      if (error) throw error;
+
+      await loadData();
+
+      setShowFolderForm(false);
+
+      showToast('Dossier créé.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de créer le dossier.'
+      );
+    }
+  }
+
+  async function deleteFolder(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('doc_folders')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      if (docFolderFilter === id) {
+        setDocFolderFilter('all');
+      }
+
+      await loadData();
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de supprimer le dossier.'
+      );
+    }
+  }
+
+  async function uploadDocument({
+    file,
+    name,
+    folderId,
+    projectId,
+    taskId,
+  }) {
+    try {
+      const ext = file.name.includes('.')
+        ? file.name
+            .split('.')
+            .pop()
+            .replace(/[^a-zA-Z0-9]/g, '')
+        : '';
+
+      const path = `${genId()}${
+        ext ? '.' + ext : ''
+      }`;
+
+      const { error: uploadError } =
+        await supabase.storage
+          .from('documents')
+          .upload(path, file);
+
+      if (uploadError) throw uploadError;
+
+      const { error } =
+        await supabase
+          .from('documents')
+          .insert({
+            id: genId(),
+            name,
+            storage_path: path,
+            mime_type: file.type || '',
+            size: file.size,
+            folder_id: folderId,
+            project_id: projectId,
+            task_id: taskId,
+            uploaded_by: session.displayName,
+          });
+
+      if (error) throw error;
+
+      await loadData();
+
+      setShowDocumentUpload(null);
+
+      showToast('Document ajouté.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'ajouter le document."
+      );
+    }
+  }
+
+  async function reclassifyDocument(id, data) {
+    try {
+      const { error } =
+        await supabase
+          .from('documents')
+          .update({
+            folder_id: data.folderId,
+            project_id: data.projectId,
+            task_id: data.taskId,
+          })
+          .eq('id', id);
+
+      if (error) throw error;
+
+      await loadData();
+
+      setReclassifyDoc(null);
+
+      showToast('Document rangé.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de ranger le document.'
+      );
+    }
+  }
+
+  async function deleteDocument(doc) {
+    try {
+      await supabase.storage
+        .from('documents')
+        .remove([doc.storagePath]);
+
+      const { error } =
+        await supabase
+          .from('documents')
+          .delete()
+          .eq('id', doc.id);
+
+      if (error) throw error;
+
+      await loadData();
+
+      showToast('Document supprimé.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de supprimer le document.'
+      );
+    }
+  }
+
+  function getDocumentUrl(doc) {
+    return supabase.storage
+      .from('documents')
+      .getPublicUrl(doc.storagePath).data
+      .publicUrl;
+  }
+
+  /* =====================================================
      NAVIGATION
   ===================================================== */
 
@@ -3667,6 +4497,52 @@ export default function MeleeApp() {
       behavior: 'smooth',
     });
   }, [roomMessages.length, chatRoom]);
+
+  const visibleDocuments = useMemo(() => {
+    let list = documents;
+
+    if (docFolderFilter === 'none') {
+      list = list.filter((d) => !d.folderId);
+    } else if (docFolderFilter !== 'all') {
+      list = list.filter(
+        (d) => d.folderId === docFolderFilter
+      );
+    }
+
+    if (docSearch.trim()) {
+      const q = docSearch.trim().toLowerCase();
+      list = list.filter((d) =>
+        d.name.toLowerCase().includes(q)
+      );
+    }
+
+    const sorted = [...list];
+
+    if (docSort === 'name_asc') {
+      sorted.sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+    } else if (docSort === 'name_desc') {
+      sorted.sort((a, b) =>
+        b.name.localeCompare(a.name)
+      );
+    } else if (docSort === 'oldest') {
+      sorted.sort((a, b) =>
+        a.createdAt.localeCompare(b.createdAt)
+      );
+    } else {
+      sorted.sort((a, b) =>
+        b.createdAt.localeCompare(a.createdAt)
+      );
+    }
+
+    return sorted;
+  }, [
+    documents,
+    docFolderFilter,
+    docSearch,
+    docSort,
+  ]);
 
   const now = new Date();
 
@@ -4462,6 +5338,80 @@ export default function MeleeApp() {
                       )
                     }
                   />
+
+                  <div
+                    className="flex items-center justify-between mt-6"
+                  >
+                    <h2 className="font-display text-lg">
+                      Documents
+                    </h2>
+
+                    <button
+                      className="btn-secondary"
+                      onClick={() =>
+                        setShowDocumentUpload({
+                          projectId:
+                            selectedProject.id,
+                        })
+                      }
+                    >
+                      <Upload size={13} />
+                      Ajouter
+                    </button>
+                  </div>
+
+                  {documents.filter(
+                    (d) =>
+                      d.projectId ===
+                      selectedProject.id
+                  ).length === 0 ? (
+                    <p
+                      className="text-sm mt-2"
+                      style={{
+                        color: 'var(--ink-light)',
+                      }}
+                    >
+                      Aucun document lié à ce
+                      projet.
+                    </p>
+                  ) : (
+                    documents
+                      .filter(
+                        (d) =>
+                          d.projectId ===
+                          selectedProject.id
+                      )
+                      .map((doc) => (
+                        <DocumentRow
+                          key={doc.id}
+                          doc={doc}
+                          folders={docFolders}
+                          projects={projects}
+                          getDocumentUrl={
+                            getDocumentUrl
+                          }
+                          onReclassify={
+                            setReclassifyDoc
+                          }
+                          onDelete={(d) =>
+                            setConfirmState({
+                              message: `Supprimer "${d.name}" ?`,
+                              onConfirm:
+                                async () => {
+                                  await deleteDocument(
+                                    d
+                                  );
+
+                                  setConfirmState(
+                                    null
+                                  );
+                                },
+                            })
+                          }
+                          compact
+                        />
+                      ))
+                  )}
                 </div>
               )}
 
@@ -5245,11 +6195,237 @@ export default function MeleeApp() {
                 </div>
               )}
 
+            {/* DOCUMENTS */}
+
+            {activeTab === 'docs' && (
+              <div>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h1 className="font-display text-2xl">
+                    Documents
+                  </h1>
+
+                  <button
+                    className="btn-primary"
+                    onClick={() =>
+                      setShowDocumentUpload({})
+                    }
+                  >
+                    <Upload size={14} />
+                    Ajouter un document
+                  </button>
+                </div>
+
+                <div className="pitch-divider" />
+
+                <div className="flex gap-2 flex-wrap mb-3">
+                  <div
+                    style={{
+                      position: 'relative',
+                      flex: 1,
+                      minWidth: 180,
+                    }}
+                  >
+                    <Search
+                      size={14}
+                      style={{
+                        position: 'absolute',
+                        left: 10,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        color: 'var(--ink-light)',
+                      }}
+                    />
+
+                    <input
+                      style={{ paddingLeft: 32 }}
+                      placeholder="Rechercher un document…"
+                      value={docSearch}
+                      onChange={(e) =>
+                        setDocSearch(e.target.value)
+                      }
+                    />
+                  </div>
+
+                  <select
+                    style={{ width: 'auto' }}
+                    value={docSort}
+                    onChange={(e) =>
+                      setDocSort(e.target.value)
+                    }
+                  >
+                    <option value="recent">
+                      Plus récent
+                    </option>
+                    <option value="oldest">
+                      Plus ancien
+                    </option>
+                    <option value="name_asc">
+                      Nom A → Z
+                    </option>
+                    <option value="name_desc">
+                      Nom Z → A
+                    </option>
+                  </select>
+                </div>
+
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <button
+                    className="pill"
+                    style={{
+                      background:
+                        docFolderFilter === 'all'
+                          ? 'var(--pitch-dark)'
+                          : 'var(--chalk)',
+                      color:
+                        docFolderFilter === 'all'
+                          ? 'var(--white)'
+                          : 'var(--ink)',
+                      border: 'none',
+                      cursor: 'pointer',
+                    }}
+                    onClick={() =>
+                      setDocFolderFilter('all')
+                    }
+                  >
+                    Tous
+                  </button>
+
+                  <button
+                    className="pill"
+                    style={{
+                      background:
+                        docFolderFilter === 'none'
+                          ? 'var(--pitch-dark)'
+                          : 'var(--chalk)',
+                      color:
+                        docFolderFilter === 'none'
+                          ? 'var(--white)'
+                          : 'var(--ink)',
+                      border: 'none',
+                      cursor: 'pointer',
+                    }}
+                    onClick={() =>
+                      setDocFolderFilter('none')
+                    }
+                  >
+                    Non classé
+                  </button>
+
+                  {docFolders.map((folder) => (
+                    <span
+                      key={folder.id}
+                      className="pill"
+                      style={{
+                        background:
+                          docFolderFilter ===
+                          folder.id
+                            ? 'var(--pitch-dark)'
+                            : 'var(--chalk)',
+                        color:
+                          docFolderFilter ===
+                          folder.id
+                            ? 'var(--white)'
+                            : 'var(--ink)',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() =>
+                        setDocFolderFilter(
+                          folder.id
+                        )
+                      }
+                    >
+                      <Folder size={10} />
+                      {folder.name}
+
+                      <X
+                        size={10}
+                        onClick={(e) => {
+                          e.stopPropagation();
+
+                          setConfirmState({
+                            message: `Supprimer le dossier "${folder.name}" ? Les documents qu'il contient repasseront en "Non classé".`,
+                            onConfirm:
+                              async () => {
+                                await deleteFolder(
+                                  folder.id
+                                );
+
+                                setConfirmState(
+                                  null
+                                );
+                              },
+                          });
+                        }}
+                      />
+                    </span>
+                  ))}
+
+                  <button
+                    className="pill"
+                    style={{
+                      background: 'var(--white)',
+                      color: 'var(--ink-light)',
+                      border: '1px dashed var(--line)',
+                      cursor: 'pointer',
+                    }}
+                    onClick={() =>
+                      setShowFolderForm(true)
+                    }
+                  >
+                    <FolderPlus size={11} />
+                    Nouveau dossier
+                  </button>
+                </div>
+
+                {visibleDocuments.length === 0 ? (
+                  <p
+                    className="text-sm"
+                    style={{
+                      color: 'var(--ink-light)',
+                    }}
+                  >
+                    Aucun document.
+                  </p>
+                ) : (
+                  <div>
+                    {visibleDocuments.map((doc) => (
+                      <DocumentRow
+                        key={doc.id}
+                        doc={doc}
+                        folders={docFolders}
+                        projects={projects}
+                        getDocumentUrl={
+                          getDocumentUrl
+                        }
+                        onReclassify={
+                          setReclassifyDoc
+                        }
+                        onDelete={(d) =>
+                          setConfirmState({
+                            message: `Supprimer "${d.name}" ?`,
+                            onConfirm:
+                              async () => {
+                                await deleteDocument(
+                                  d
+                                );
+
+                                setConfirmState(
+                                  null
+                                );
+                              },
+                          })
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* PAGES EN CONSTRUCTION */}
 
             {[
               'cycles',
-              'docs',
             ].includes(activeTab) && (
               <div
                 className="flex flex-col items-center text-center"
@@ -5367,12 +6543,93 @@ export default function MeleeApp() {
           comments={taskComments.filter(
             (c) => c.taskId === editingTask.id
           )}
-          currentUserDisplayName={
-            session.displayName
-          }
+          taskDocuments={documents.filter(
+            (d) => d.taskId === editingTask.id
+          )}
+          linkableDocuments={documents.filter(
+            (d) =>
+              d.projectId === editingTask.projectId &&
+              d.taskId !== editingTask.id
+          )}
+          getDocumentUrl={getDocumentUrl}
           onSave={updateTask}
           onAddComment={addTaskComment}
+          onLinkDocument={(docId) =>
+            reclassifyDocument(docId, {
+              folderId:
+                documents.find(
+                  (d) => d.id === docId
+                )?.folderId || null,
+              projectId: editingTask.projectId,
+              taskId: editingTask.id,
+            })
+          }
+          onUnlinkDocument={(docId) =>
+            reclassifyDocument(docId, {
+              folderId:
+                documents.find(
+                  (d) => d.id === docId
+                )?.folderId || null,
+              projectId: editingTask.projectId,
+              taskId: null,
+            })
+          }
+          onOpenDocumentUpload={() => {
+            setShowDocumentUpload({
+              projectId: editingTask.projectId,
+              taskId: editingTask.id,
+            });
+            setEditingTask(null);
+          }}
           onCancel={() => setEditingTask(null)}
+        />
+      )}
+
+      {/* NOUVEAU DOSSIER */}
+
+      {showFolderForm && (
+        <FolderFormModal
+          onSubmit={createFolder}
+          onCancel={() => setShowFolderForm(false)}
+        />
+      )}
+
+      {/* AJOUTER UN DOCUMENT */}
+
+      {showDocumentUpload && (
+        <DocumentUploadModal
+          folders={docFolders}
+          projects={projects}
+          tasks={tasks}
+          initialFolderId={
+            docFolderFilter !== 'all' &&
+            docFolderFilter !== 'none'
+              ? docFolderFilter
+              : null
+          }
+          initialProjectId={
+            showDocumentUpload.projectId || null
+          }
+          initialTaskId={
+            showDocumentUpload.taskId || null
+          }
+          onSubmit={uploadDocument}
+          onCancel={() =>
+            setShowDocumentUpload(null)
+          }
+        />
+      )}
+
+      {/* RANGER UN DOCUMENT */}
+
+      {reclassifyDoc && (
+        <DocumentReclassifyModal
+          document={reclassifyDoc}
+          folders={docFolders}
+          projects={projects}
+          tasks={tasks}
+          onSubmit={reclassifyDocument}
+          onCancel={() => setReclassifyDoc(null)}
         />
       )}
 
