@@ -1754,6 +1754,21 @@ export default function MeleeApp() {
       clearInterval(interval);
   }, [dataLoaded, session]);
 
+  useEffect(() => {
+    if (!dataLoaded || !session)
+      return;
+
+    const stillExists = users.some(
+      (u) =>
+        u.username.toLowerCase() ===
+        session.username.toLowerCase()
+    );
+
+    if (!stillExists) {
+      handleLogout();
+    }
+  }, [dataLoaded, users, session]);
+
   /* =====================================================
      AUTHENTIFICATION
   ===================================================== */
