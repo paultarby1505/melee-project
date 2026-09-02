@@ -1573,7 +1573,9 @@ function LoginForm({
 function CalendarView({
   monthDate,
   tasksByDate,
+  eventsByDate,
   getProjectColor,
+  getMemberColor,
   selectedDay,
   onSelectDay,
   onPrevMonth,
@@ -1630,6 +1632,9 @@ function CalendarView({
           const dayTasks =
             tasksByDate[cell.iso] || [];
 
+          const dayEvents =
+            eventsByDate[cell.iso] || [];
+
           const isToday =
             cell.iso === todayISO();
 
@@ -1675,6 +1680,27 @@ function CalendarView({
                     />
                   ))}
               </div>
+
+              {dayEvents.length > 0 && (
+                <div className="flex gap-0.5 flex-wrap justify-center mt-0.5">
+                  {dayEvents
+                    .slice(0, 3)
+                    .map((event) => (
+                      <span
+                        key={event.id}
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: 2,
+                          background:
+                            getMemberColor(
+                              event.assignee
+                            ),
+                        }}
+                      />
+                    ))}
+                </div>
+              )}
             </button>
           );
         })}
@@ -1683,39 +1709,81 @@ function CalendarView({
   );
 }
 
-function MemberLegend({ users, getMemberColor }) {
+function MemberLegend({
+  users,
+  getMemberColor,
+  filterMember,
+  onSelect,
+}) {
   if (!users.length) return null;
 
   return (
     <div className="flex flex-wrap gap-2 mb-3">
-      {users.map((user) => (
-        <span
-          key={user.username}
+      {filterMember && (
+        <button
+          type="button"
           className="pill"
           style={{
-            background: 'var(--chalk)',
-            color: 'var(--ink)',
+            background: 'var(--ink)',
+            color: 'var(--white)',
+            border: 'none',
+            cursor: 'pointer',
           }}
+          onClick={() => onSelect(null)}
         >
-          <span
+          Tous
+        </button>
+      )}
+
+      {users.map((user) => {
+        const active =
+          filterMember === user.displayName;
+
+        return (
+          <button
+            type="button"
+            key={user.username}
+            className="pill"
             style={{
-              width: 8,
-              height: 8,
-              borderRadius: '50%',
-              background: getMemberColor(user.displayName),
-              display: 'inline-block',
+              background: active
+                ? getMemberColor(user.displayName)
+                : 'var(--chalk)',
+              color: active
+                ? 'var(--white)'
+                : 'var(--ink)',
+              border: 'none',
+              cursor: 'pointer',
             }}
-          />
-          {user.displayName}
-        </span>
-      ))}
+            onClick={() =>
+              onSelect(
+                active ? null : user.displayName
+              )
+            }
+          >
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: active
+                  ? 'var(--white)'
+                  : getMemberColor(user.displayName),
+                display: 'inline-block',
+              }}
+            />
+            {user.displayName}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
 function WeekView({
   weekAnchor,
+  tasksByDate,
   eventsByDate,
+  getProjectColor,
   getMemberColor,
   onPrevWeek,
   onNextWeek,
@@ -1758,6 +1826,7 @@ function WeekView({
         style={{ alignItems: 'start' }}
       >
         {days.map((day, i) => {
+          const dayTasks = tasksByDate[day.iso] || [];
           const dayEvents = eventsByDate[day.iso] || [];
           const isToday = day.iso === todayISO();
 
@@ -1790,6 +1859,45 @@ function WeekView({
                   <Plus size={11} />
                 </button>
               </div>
+
+              {dayTasks.length > 0 && (
+                <div
+                  className="mt-2"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                  }}
+                >
+                  {dayTasks.map((task) => (
+                    <div
+                      key={task.id}
+                      style={{
+                        borderLeft: `3px solid ${getProjectColor(
+                          task.projectId
+                        )}`,
+                        background: 'var(--chalk)',
+                        borderRadius: 6,
+                        padding: '4px 6px',
+                      }}
+                    >
+                      <p
+                        className="text-xs font-medium"
+                        style={{ color: 'var(--ink)' }}
+                      >
+                        {task.title}
+                      </p>
+
+                      <p
+                        className="text-xs"
+                        style={{ color: 'var(--ink-light)' }}
+                      >
+                        {task.assignee}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               <div
                 className="mt-2"
@@ -1937,6 +2045,10 @@ export default function MeleeApp() {
 
   const [weekAnchor, setWeekAnchor] = useState(
     new Date()
+  );
+
+  const [filterMember, setFilterMember] = useState(
+    null
   );
 
   /* =====================================================
@@ -2887,6 +2999,44 @@ export default function MeleeApp() {
       return result;
     }, [events]);
 
+  const visibleTasksByDate =
+    useMemo(() => {
+      if (!filterMember) return tasksByDate;
+
+      const result = {};
+
+      Object.keys(tasksByDate).forEach((date) => {
+        const filtered = tasksByDate[date].filter(
+          (task) => task.assignee === filterMember
+        );
+
+        if (filtered.length) {
+          result[date] = filtered;
+        }
+      });
+
+      return result;
+    }, [tasksByDate, filterMember]);
+
+  const visibleEventsByDate =
+    useMemo(() => {
+      if (!filterMember) return eventsByDate;
+
+      const result = {};
+
+      Object.keys(eventsByDate).forEach((date) => {
+        const filtered = eventsByDate[date].filter(
+          (event) => event.assignee === filterMember
+        );
+
+        if (filtered.length) {
+          result[date] = filtered;
+        }
+      });
+
+      return result;
+    }, [eventsByDate, filterMember]);
+
   const now = new Date();
 
   const todayLabelFR =
@@ -3706,14 +3856,12 @@ export default function MeleeApp() {
 
                 <div className="pitch-divider" />
 
-                {planningView !== 'liste' && (
-                  <MemberLegend
-                    users={users}
-                    getMemberColor={
-                      getMemberColor
-                    }
-                  />
-                )}
+                <MemberLegend
+                  users={users}
+                  getMemberColor={getMemberColor}
+                  filterMember={filterMember}
+                  onSelect={setFilterMember}
+                />
 
                 {planningView ===
                 'calendar' ? (
@@ -3723,10 +3871,16 @@ export default function MeleeApp() {
                         calendarMonth
                       }
                       tasksByDate={
-                        tasksByDate
+                        visibleTasksByDate
+                      }
+                      eventsByDate={
+                        visibleEventsByDate
                       }
                       getProjectColor={
                         getProjectColor
+                      }
+                      getMemberColor={
+                        getMemberColor
                       }
                       selectedDay={
                         selectedDay
@@ -3765,7 +3919,7 @@ export default function MeleeApp() {
                           )}
                         </h3>
 
-                        {(tasksByDate[
+                        {(visibleTasksByDate[
                           selectedDay
                         ] || []).map(
                           (task) => (
@@ -3806,7 +3960,7 @@ export default function MeleeApp() {
                           </button>
                         </div>
 
-                        {(eventsByDate[
+                        {(visibleEventsByDate[
                           selectedDay
                         ] || []).length ===
                         0 ? (
@@ -3820,7 +3974,7 @@ export default function MeleeApp() {
                             Aucun événement.
                           </p>
                         ) : (
-                          (eventsByDate[
+                          (visibleEventsByDate[
                             selectedDay
                           ] || []).map(
                             (event) => (
@@ -3890,7 +4044,11 @@ export default function MeleeApp() {
                 ) : planningView === 'semaine' ? (
                   <WeekView
                     weekAnchor={weekAnchor}
-                    eventsByDate={eventsByDate}
+                    tasksByDate={visibleTasksByDate}
+                    eventsByDate={visibleEventsByDate}
+                    getProjectColor={
+                      getProjectColor
+                    }
                     getMemberColor={
                       getMemberColor
                     }
@@ -3925,7 +4083,10 @@ export default function MeleeApp() {
                         (t) =>
                           t.status !==
                             'termine' &&
-                          t.dueDate
+                          t.dueDate &&
+                          (!filterMember ||
+                            t.assignee ===
+                              filterMember)
                       )
                       .sort((a, b) =>
                         a.dueDate.localeCompare(
