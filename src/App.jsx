@@ -2443,9 +2443,9 @@ export default function MeleeApp() {
         @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Work+Sans:wght@400;500;600;700&display=swap');
 
         .melee-app {
-          --pitch-dark:#16352A;
-          --pitch:#2D6A4F;
-          --pitch-tint:#E3EEE8;
+          --pitch-dark:#1A1A1A;
+          --pitch:#E3B100;
+          --pitch-tint:#FFF4D6;
           --chalk:#F7F5F0;
           --ink:#20241F;
           --ink-light:#5C6259;
@@ -2494,7 +2494,7 @@ export default function MeleeApp() {
         .melee-app .logo-mark {
           width:10px;
           height:10px;
-          background:var(--amber);
+          background:var(--pitch);
           border-radius:2px;
           transform:rotate(45deg);
           display:inline-block;
