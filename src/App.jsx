@@ -80,6 +80,17 @@ const PROJECT_COLORS = [
   '#C98A2C',
 ];
 
+const MEMBER_COLORS = [
+  '#3D5A80',
+  '#8A6BAE',
+  '#2D6A4F',
+  '#B08968',
+  '#C98A2C',
+  '#5C6B73',
+  '#A64B2A',
+  '#6B8F71',
+];
+
 const STATUS_ORDER = ['a_venir', 'en_cours', 'termine'];
 
 const STATUS_META = {
@@ -252,6 +263,30 @@ function getMonthMatrix(year, month) {
   }
 
   return cells;
+}
+
+function getWeekDays(anchorDate) {
+  const offset = (anchorDate.getDay() + 6) % 7;
+
+  const monday = new Date(
+    anchorDate.getFullYear(),
+    anchorDate.getMonth(),
+    anchorDate.getDate() - offset
+  );
+
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(
+      monday.getFullYear(),
+      monday.getMonth(),
+      monday.getDate() + i
+    );
+
+    const iso = `${d.getFullYear()}-${String(
+      d.getMonth() + 1
+    ).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    return { date: d, iso };
+  });
 }
 
 /* =========================================================
@@ -866,6 +901,132 @@ function TaskQuickAddForm({
         <Plus size={14} />
         Ajouter
       </button>
+    </div>
+  );
+}
+
+function EventFormModal({
+  initialDate,
+  users,
+  defaultAssignee,
+  onSubmit,
+  onCancel,
+}) {
+  const [title, setTitle] = useState('');
+  const [date, setDate] = useState(
+    initialDate || todayISO()
+  );
+  const [time, setTime] = useState('');
+  const [assignee, setAssignee] = useState(
+    defaultAssignee || ''
+  );
+  const [error, setError] = useState('');
+
+  function submit() {
+    if (!title.trim()) {
+      setError("Le titre est obligatoire.");
+      return;
+    }
+
+    if (!date) {
+      setError('La date est obligatoire.');
+      return;
+    }
+
+    onSubmit({
+      title: title.trim(),
+      date,
+      time,
+      assignee: assignee || defaultAssignee,
+    });
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          Nouvel événement
+        </h3>
+
+        <div
+          className="mt-4"
+          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+        >
+          <div>
+            <label>Titre</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              autoFocus
+              placeholder="Ex. RDV avec le sponsor"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label>Date</label>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label>Heure</label>
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label>Assigné à</label>
+            <select
+              value={assignee}
+              onChange={(e) => setAssignee(e.target.value)}
+            >
+              {users.map((user) => (
+                <option
+                  key={user.username}
+                  value={user.displayName}
+                >
+                  {user.displayName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {error && (
+            <p className="text-xs" style={{ color: 'var(--red)' }}>
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            Ajouter
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1522,6 +1683,182 @@ function CalendarView({
   );
 }
 
+function MemberLegend({ users, getMemberColor }) {
+  if (!users.length) return null;
+
+  return (
+    <div className="flex flex-wrap gap-2 mb-3">
+      {users.map((user) => (
+        <span
+          key={user.username}
+          className="pill"
+          style={{
+            background: 'var(--chalk)',
+            color: 'var(--ink)',
+          }}
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: getMemberColor(user.displayName),
+              display: 'inline-block',
+            }}
+          />
+          {user.displayName}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function WeekView({
+  weekAnchor,
+  eventsByDate,
+  getMemberColor,
+  onPrevWeek,
+  onNextWeek,
+  onAddEventDay,
+  onDeleteEvent,
+}) {
+  const days = useMemo(
+    () => getWeekDays(weekAnchor),
+    [weekAnchor]
+  );
+
+  const first = days[0].date;
+  const last = days[6].date;
+
+  const rangeLabel =
+    first.getMonth() === last.getMonth()
+      ? `${first.getDate()} - ${last.getDate()} ${
+          MONTHS_FR[first.getMonth()]
+        } ${first.getFullYear()}`
+      : `${first.getDate()} ${
+          MONTHS_FR[first.getMonth()]
+        } - ${last.getDate()} ${MONTHS_FR[last.getMonth()]} ${last.getFullYear()}`;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <button className="icon-btn" onClick={onPrevWeek}>
+          <ChevronLeft size={16} />
+        </button>
+
+        <h2 className="font-display uppercase">{rangeLabel}</h2>
+
+        <button className="icon-btn" onClick={onNextWeek}>
+          <ChevronRight size={16} />
+        </button>
+      </div>
+
+      <div
+        className="grid grid-cols-7 gap-2"
+        style={{ alignItems: 'start' }}
+      >
+        {days.map((day, i) => {
+          const dayEvents = eventsByDate[day.iso] || [];
+          const isToday = day.iso === todayISO();
+
+          return (
+            <div
+              key={day.iso}
+              style={{
+                border: '1px solid var(--line)',
+                borderRadius: 10,
+                padding: 8,
+                minHeight: 140,
+                background: isToday
+                  ? 'var(--pitch-tint)'
+                  : 'var(--white)',
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <p
+                  className="text-xs font-semibold"
+                  style={{ color: 'var(--ink-light)' }}
+                >
+                  {DAYS_FR[i]} {day.date.getDate()}
+                </p>
+
+                <button
+                  className="icon-btn"
+                  style={{ width: 20, height: 20, borderRadius: 5 }}
+                  onClick={() => onAddEventDay(day.iso)}
+                >
+                  <Plus size={11} />
+                </button>
+              </div>
+
+              <div
+                className="mt-2"
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}
+              >
+                {dayEvents.map((ev) => (
+                  <div
+                    key={ev.id}
+                    style={{
+                      borderLeft: `3px solid ${getMemberColor(
+                        ev.assignee
+                      )}`,
+                      background: 'var(--chalk)',
+                      borderRadius: 6,
+                      padding: '4px 6px',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <p
+                        className="text-xs font-semibold"
+                        style={{
+                          color: getMemberColor(ev.assignee),
+                        }}
+                      >
+                        {ev.time || ''}
+                      </p>
+
+                      <button
+                        className="icon-btn"
+                        style={{
+                          width: 16,
+                          height: 16,
+                          borderRadius: 4,
+                          border: 'none',
+                        }}
+                        onClick={() => onDeleteEvent(ev.id)}
+                      >
+                        <X size={9} />
+                      </button>
+                    </div>
+
+                    <p
+                      className="text-xs"
+                      style={{ color: 'var(--ink)' }}
+                    >
+                      {ev.title}
+                    </p>
+
+                    <p
+                      className="text-xs"
+                      style={{ color: 'var(--ink-light)' }}
+                    >
+                      {ev.assignee}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* =========================================================
    APP
 ========================================================= */
@@ -1590,6 +1927,18 @@ export default function MeleeApp() {
   const [resetPasswordUser, setResetPasswordUser] =
     useState(null);
 
+  const [events, setEvents] = useState([]);
+
+  const [showEventForm, setShowEventForm] =
+    useState(false);
+
+  const [eventFormDate, setEventFormDate] =
+    useState(null);
+
+  const [weekAnchor, setWeekAnchor] = useState(
+    new Date()
+  );
+
   /* =====================================================
      TOAST
   ===================================================== */
@@ -1612,6 +1961,7 @@ export default function MeleeApp() {
         usersResult,
         projectsResult,
         tasksResult,
+        eventsResult,
       ] = await Promise.all([
         supabase
           .from('users')
@@ -1633,6 +1983,13 @@ export default function MeleeApp() {
           .order('created_at', {
             ascending: true,
           }),
+
+        supabase
+          .from('events')
+          .select('*')
+          .order('event_date', {
+            ascending: true,
+          }),
       ]);
 
       if (usersResult.error)
@@ -1643,6 +2000,9 @@ export default function MeleeApp() {
 
       if (tasksResult.error)
         throw tasksResult.error;
+
+      if (eventsResult.error)
+        throw eventsResult.error;
 
       setUsers(
         (usersResult.data || []).map(
@@ -1696,6 +2056,20 @@ export default function MeleeApp() {
               t.created_by || '',
             createdAt:
               t.created_at,
+          })
+        )
+      );
+
+      setEvents(
+        (eventsResult.data || []).map(
+          (e) => ({
+            id: e.id,
+            title: e.title,
+            date: e.event_date || '',
+            time: e.event_time || '',
+            assignee: e.assignee || '',
+            createdBy: e.created_by || '',
+            createdAt: e.created_at,
           })
         )
       );
@@ -2307,6 +2681,72 @@ export default function MeleeApp() {
   }
 
   /* =====================================================
+     EVENEMENTS
+  ===================================================== */
+
+  async function addEvent(data) {
+    try {
+      const { error } =
+        await supabase
+          .from('events')
+          .insert({
+            id: genId(),
+            title: data.title,
+            event_date: data.date,
+            event_time: data.time || null,
+            assignee:
+              data.assignee ||
+              session.displayName,
+            created_by: session.displayName,
+          });
+
+      if (error) throw error;
+
+      await loadData();
+
+      setShowEventForm(false);
+
+      showToast('Événement ajouté.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'ajouter l'événement."
+      );
+    }
+  }
+
+  async function deleteEvent(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('events')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      await loadData();
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible de supprimer l'événement."
+      );
+    }
+  }
+
+  function getMemberColor(displayName) {
+    const idx = users.findIndex(
+      (u) => u.displayName === displayName
+    );
+
+    return MEMBER_COLORS[
+      Math.max(0, idx) % MEMBER_COLORS.length
+    ];
+  }
+
+  /* =====================================================
      NAVIGATION
   ===================================================== */
 
@@ -2423,6 +2863,29 @@ export default function MeleeApp() {
 
       return result;
     }, [tasks]);
+
+  const eventsByDate =
+    useMemo(() => {
+      const result = {};
+
+      events.forEach((event) => {
+        if (!event.date) return;
+
+        if (!result[event.date]) {
+          result[event.date] = [];
+        }
+
+        result[event.date].push(event);
+      });
+
+      Object.values(result).forEach((list) =>
+        list.sort((a, b) =>
+          (a.time || '').localeCompare(b.time || '')
+        )
+      );
+
+      return result;
+    }, [events]);
 
   const now = new Date();
 
@@ -3181,12 +3644,12 @@ export default function MeleeApp() {
 
             {activeTab === 'planning' && (
               <div>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <h1 className="font-display text-2xl">
                     Planning
                   </h1>
 
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 flex-wrap">
                     <button
                       className="btn-secondary"
                       onClick={() =>
@@ -3203,6 +3666,18 @@ export default function MeleeApp() {
                       className="btn-secondary"
                       onClick={() =>
                         setPlanningView(
+                          'semaine'
+                        )
+                      }
+                    >
+                      <CalendarDays size={14} />
+                      Semaine
+                    </button>
+
+                    <button
+                      className="btn-secondary"
+                      onClick={() =>
+                        setPlanningView(
                           'liste'
                         )
                       }
@@ -3210,10 +3685,35 @@ export default function MeleeApp() {
                       <List size={14} />
                       Liste
                     </button>
+
+                    <button
+                      className="btn-primary"
+                      onClick={() => {
+                        setEventFormDate(
+                          selectedDay ||
+                            todayISO()
+                        );
+                        setShowEventForm(
+                          true
+                        );
+                      }}
+                    >
+                      <Plus size={14} />
+                      Événement
+                    </button>
                   </div>
                 </div>
 
                 <div className="pitch-divider" />
+
+                {planningView !== 'liste' && (
+                  <MemberLegend
+                    users={users}
+                    getMemberColor={
+                      getMemberColor
+                    }
+                  />
+                )}
 
                 {planningView ===
                 'calendar' ? (
@@ -3281,9 +3781,143 @@ export default function MeleeApp() {
                             />
                           )
                         )}
+
+                        <div className="flex items-center justify-between mt-4">
+                          <h3 className="font-display">
+                            Événements du{' '}
+                            {formatDateFR(
+                              selectedDay
+                            )}
+                          </h3>
+
+                          <button
+                            className="btn-secondary"
+                            onClick={() => {
+                              setEventFormDate(
+                                selectedDay
+                              );
+                              setShowEventForm(
+                                true
+                              );
+                            }}
+                          >
+                            <Plus size={13} />
+                            Ajouter
+                          </button>
+                        </div>
+
+                        {(eventsByDate[
+                          selectedDay
+                        ] || []).length ===
+                        0 ? (
+                          <p
+                            className="text-sm mt-2"
+                            style={{
+                              color:
+                                'var(--ink-light)',
+                            }}
+                          >
+                            Aucun événement.
+                          </p>
+                        ) : (
+                          (eventsByDate[
+                            selectedDay
+                          ] || []).map(
+                            (event) => (
+                              <div
+                                key={event.id}
+                                className="flex items-center gap-3 py-2"
+                                style={{
+                                  borderBottom:
+                                    '1px solid var(--line)',
+                                }}
+                              >
+                                <span
+                                  className="dot"
+                                  style={{
+                                    background:
+                                      getMemberColor(
+                                        event.assignee
+                                      ),
+                                  }}
+                                />
+
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium truncate">
+                                    {event.time && (
+                                      <span
+                                        style={{
+                                          color:
+                                            'var(--ink-light)',
+                                        }}
+                                      >
+                                        {
+                                          event.time
+                                        }{' '}
+                                      </span>
+                                    )}
+                                    {event.title}
+                                  </p>
+
+                                  <p
+                                    className="text-xs"
+                                    style={{
+                                      color:
+                                        'var(--ink-light)',
+                                    }}
+                                  >
+                                    {event.assignee}
+                                  </p>
+                                </div>
+
+                                <button
+                                  className="icon-btn"
+                                  onClick={() =>
+                                    deleteEvent(
+                                      event.id
+                                    )
+                                  }
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            )
+                          )
+                        )}
                       </div>
                     )}
                   </>
+                ) : planningView === 'semaine' ? (
+                  <WeekView
+                    weekAnchor={weekAnchor}
+                    eventsByDate={eventsByDate}
+                    getMemberColor={
+                      getMemberColor
+                    }
+                    onPrevWeek={() =>
+                      setWeekAnchor(
+                        new Date(
+                          weekAnchor.getFullYear(),
+                          weekAnchor.getMonth(),
+                          weekAnchor.getDate() - 7
+                        )
+                      )
+                    }
+                    onNextWeek={() =>
+                      setWeekAnchor(
+                        new Date(
+                          weekAnchor.getFullYear(),
+                          weekAnchor.getMonth(),
+                          weekAnchor.getDate() + 7
+                        )
+                      )
+                    }
+                    onAddEventDay={(iso) => {
+                      setEventFormDate(iso);
+                      setShowEventForm(true);
+                    }}
+                    onDeleteEvent={deleteEvent}
+                  />
                 ) : (
                   <div>
                     {tasks
@@ -3553,6 +4187,22 @@ export default function MeleeApp() {
           }}
           onCancel={() =>
             setResetPasswordUser(null)
+          }
+        />
+      )}
+
+      {/* NOUVEL EVENEMENT */}
+
+      {showEventForm && (
+        <EventFormModal
+          initialDate={eventFormDate}
+          users={users}
+          defaultAssignee={
+            session.displayName
+          }
+          onSubmit={addEvent}
+          onCancel={() =>
+            setShowEventForm(false)
           }
         />
       )}
