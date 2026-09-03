@@ -43,6 +43,10 @@ import {
   Unlink,
   ClipboardList,
   Star,
+  Wallet,
+  TrendingUp,
+  TrendingDown,
+  Receipt,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -138,6 +142,7 @@ const TABS = [
     label: 'Évaluations',
     icon: ClipboardList,
   },
+  { id: 'finance', label: 'Finance', icon: Wallet },
 ];
 
 const PLAYER_CATEGORIES = [
@@ -472,6 +477,13 @@ function getOverallAverage(scores) {
   );
 
   return averages.length ? sum / averages.length : 0;
+}
+
+function formatCurrency(amount) {
+  return `${(amount || 0).toLocaleString('fr-FR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} €`;
 }
 
 /* =========================================================
@@ -1344,6 +1356,9 @@ function TaskEditModal({
   taskDocuments,
   linkableDocuments,
   getDocumentUrl,
+  taskCost,
+  onOpenCostForm,
+  onRemoveCost,
   onSave,
   onAddComment,
   onLinkDocument,
@@ -1658,6 +1673,60 @@ function TaskEditModal({
                 Lier
               </button>
             </div>
+          )}
+        </div>
+
+        <div
+          className="mt-5"
+          style={{
+            paddingTop: 14,
+            borderTop: '1px solid var(--line)',
+          }}
+        >
+          <h4 className="font-display text-sm">
+            Finance
+          </h4>
+
+          {taskCost ? (
+            <div className="flex items-center justify-between mt-2">
+              <span
+                className="text-sm"
+                style={{
+                  color: 'var(--red)',
+                  fontWeight: 600,
+                }}
+              >
+                - {formatCurrency(taskCost.amount)}
+              </span>
+
+              <div className="flex gap-2">
+                <button
+                  className="icon-btn"
+                  onClick={() =>
+                    onOpenCostForm(taskCost)
+                  }
+                >
+                  <Pencil size={12} />
+                </button>
+
+                <button
+                  className="icon-btn"
+                  onClick={() =>
+                    onRemoveCost(taskCost.id)
+                  }
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              className="btn-secondary mt-2"
+              onClick={() => onOpenCostForm(null)}
+            >
+              <Wallet size={12} />
+              Ajouter un coût
+            </button>
           )}
         </div>
       </div>
@@ -2130,6 +2199,142 @@ function DocumentRow({
           <Trash2 size={14} />
         </button>
       )}
+    </div>
+  );
+}
+
+function TransactionRow({
+  transaction,
+  projects,
+  tasks,
+  documents,
+  getDocumentUrl,
+  onEdit,
+  onDelete,
+}) {
+  const project = projects.find(
+    (p) => p.id === transaction.projectId
+  );
+
+  const task = tasks.find(
+    (t) => t.id === transaction.taskId
+  );
+
+  const doc = documents.find(
+    (d) => d.id === transaction.documentId
+  );
+
+  const isIn = transaction.type === 'in';
+
+  return (
+    <div
+      className="flex items-center gap-3 py-2"
+      style={{ borderBottom: '1px solid var(--line)' }}
+    >
+      <div
+        style={{
+          width: 34,
+          height: 34,
+          borderRadius: 8,
+          background: isIn
+            ? '#E3EEE8'
+            : 'var(--red-tint)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        {isIn ? (
+          <TrendingUp size={16} color="#2D6A4F" />
+        ) : (
+          <TrendingDown
+            size={16}
+            color="var(--red)"
+          />
+        )}
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate">
+          {transaction.reason}
+        </p>
+
+        <div className="flex items-center gap-2 flex-wrap mt-1">
+          <span
+            className="text-xs"
+            style={{ color: 'var(--ink-light)' }}
+          >
+            {formatDateFR(
+              transaction.createdAt.slice(0, 10)
+            )}
+          </span>
+
+          {project && (
+            <span
+              className="pill"
+              style={{
+                background: 'var(--chalk)',
+                color: 'var(--ink-light)',
+              }}
+            >
+              {project.name}
+            </span>
+          )}
+
+          {task && (
+            <span
+              className="pill"
+              style={{
+                background: 'var(--chalk)',
+                color: 'var(--ink-light)',
+              }}
+            >
+              {task.title}
+            </span>
+          )}
+
+          {doc && (
+            <a
+              href={getDocumentUrl(doc)}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs flex items-center gap-1"
+              style={{ color: 'var(--ink-light)' }}
+            >
+              <Receipt size={11} />
+              Justificatif
+            </a>
+          )}
+        </div>
+      </div>
+
+      <span
+        className="score"
+        style={{
+          fontSize: 16,
+          color: isIn
+            ? '#2D6A4F'
+            : 'var(--red)',
+        }}
+      >
+        {isIn ? '+' : '-'}
+        {formatCurrency(transaction.amount)}
+      </span>
+
+      <button
+        className="icon-btn"
+        onClick={() => onEdit(transaction)}
+      >
+        <Pencil size={14} />
+      </button>
+
+      <button
+        className="icon-btn"
+        onClick={() => onDelete(transaction)}
+      >
+        <Trash2 size={14} />
+      </button>
     </div>
   );
 }
@@ -3459,6 +3664,358 @@ function EvaluationFormModal({
   );
 }
 
+function DonutChart({ totalIn, totalOut, size = 160 }) {
+  const total = totalIn + totalOut;
+  const center = size / 2;
+  const radius = size / 2 - 14;
+  const strokeWidth = 20;
+  const circumference = 2 * Math.PI * radius;
+  const inFraction =
+    total > 0 ? totalIn / total : 0;
+  const inLength = inFraction * circumference;
+  const balance = totalIn - totalOut;
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+    >
+      <circle
+        cx={center}
+        cy={center}
+        r={radius}
+        fill="none"
+        stroke={
+          total > 0 ? 'var(--red)' : 'var(--line)'
+        }
+        strokeWidth={strokeWidth}
+      />
+
+      {total > 0 && (
+        <circle
+          cx={center}
+          cy={center}
+          r={radius}
+          fill="none"
+          stroke="#2D6A4F"
+          strokeWidth={strokeWidth}
+          strokeDasharray={`${inLength} ${
+            circumference - inLength
+          }`}
+          transform={`rotate(-90 ${center} ${center})`}
+        />
+      )}
+
+      <text
+        x={center}
+        y={center - 4}
+        textAnchor="middle"
+        fontSize="15"
+        fontWeight="700"
+        fill={
+          balance >= 0
+            ? 'var(--pitch-dark)'
+            : 'var(--red)'
+        }
+      >
+        {formatCurrency(balance)}
+      </text>
+
+      <text
+        x={center}
+        y={center + 14}
+        textAnchor="middle"
+        fontSize="10"
+        fill="var(--ink-light)"
+      >
+        Solde
+      </text>
+    </svg>
+  );
+}
+
+function TransactionFormModal({
+  existing,
+  initialProjectId,
+  initialTaskId,
+  initialType,
+  projects,
+  tasks,
+  onSubmit,
+  onCancel,
+}) {
+  const [type, setType] = useState(
+    existing?.type || initialType || 'out'
+  );
+
+  const [amount, setAmount] = useState(
+    existing ? String(existing.amount) : ''
+  );
+
+  const [reason, setReason] = useState(
+    existing?.reason || ''
+  );
+
+  const [projectId, setProjectId] = useState(
+    existing?.projectId ||
+      initialProjectId ||
+      null
+  );
+
+  const [taskId, setTaskId] = useState(
+    existing?.taskId || initialTaskId || null
+  );
+
+  const [file, setFile] = useState(null);
+  const [removeDocument, setRemoveDocument] =
+    useState(false);
+
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const projectTasks = projectId
+    ? tasks.filter(
+        (t) => t.projectId === projectId
+      )
+    : [];
+
+  async function submit() {
+    const numericAmount = Number(
+      amount.replace(',', '.')
+    );
+
+    if (!reason.trim()) {
+      setError('La cause du mouvement est obligatoire.');
+      return;
+    }
+
+    if (!numericAmount || numericAmount <= 0) {
+      setError('Le montant doit être supérieur à 0.');
+      return;
+    }
+
+    setBusy(true);
+
+    await onSubmit({
+      type,
+      amount: numericAmount,
+      reason: reason.trim(),
+      projectId,
+      taskId,
+      file,
+      removeDocument,
+    });
+
+    setBusy(false);
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          {existing
+            ? 'Modifier le mouvement'
+            : 'Nouveau mouvement'}
+        </h3>
+
+        <div
+          className="mt-4"
+          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+        >
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{
+                flex: 1,
+                background:
+                  type === 'in'
+                    ? '#2D6A4F'
+                    : 'var(--white)',
+                color:
+                  type === 'in'
+                    ? 'var(--white)'
+                    : 'var(--ink)',
+              }}
+              onClick={() => setType('in')}
+            >
+              <TrendingUp size={14} />
+              Rentrée
+            </button>
+
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{
+                flex: 1,
+                background:
+                  type === 'out'
+                    ? 'var(--red)'
+                    : 'var(--white)',
+                color:
+                  type === 'out'
+                    ? 'var(--white)'
+                    : 'var(--ink)',
+              }}
+              onClick={() => setType('out')}
+            >
+              <TrendingDown size={14} />
+              Dépense
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label>Montant (€)</label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) =>
+                  setAmount(e.target.value)
+                }
+                placeholder="Ex. 45.90"
+              />
+            </div>
+
+            <div>
+              <label>Cause du mouvement</label>
+              <input
+                value={reason}
+                onChange={(e) =>
+                  setReason(e.target.value)
+                }
+                placeholder="Ex. Achat ballons"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label>Projet (optionnel)</label>
+            <select
+              value={projectId || ''}
+              onChange={(e) => {
+                setProjectId(
+                  e.target.value || null
+                );
+                setTaskId(null);
+              }}
+            >
+              <option value="">Aucun projet</option>
+              {projects.map((project) => (
+                <option
+                  key={project.id}
+                  value={project.id}
+                >
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {projectId && (
+            <div>
+              <label>Tâche (optionnel)</label>
+              <select
+                value={taskId || ''}
+                onChange={(e) =>
+                  setTaskId(
+                    e.target.value || null
+                  )
+                }
+              >
+                <option value="">
+                  Aucune tâche
+                </option>
+                {projectTasks.map((task) => (
+                  <option
+                    key={task.id}
+                    value={task.id}
+                  >
+                    {task.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div>
+            <label>
+              Justificatif (facture, reçu…)
+            </label>
+
+            {existing?.documentId &&
+            !removeDocument ? (
+              <div className="flex items-center justify-between">
+                <span
+                  className="text-xs flex items-center gap-1"
+                  style={{
+                    color: 'var(--ink-light)',
+                  }}
+                >
+                  <Receipt size={12} />
+                  Document déjà attaché
+                </span>
+
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() =>
+                    setRemoveDocument(true)
+                  }
+                >
+                  Retirer
+                </button>
+              </div>
+            ) : (
+              <input
+                type="file"
+                onChange={(e) =>
+                  setFile(
+                    e.target.files?.[0] || null
+                  )
+                }
+              />
+            )}
+          </div>
+
+          {error && (
+            <p className="text-xs" style={{ color: 'var(--red)' }}>
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button
+            className="btn-primary"
+            onClick={submit}
+            disabled={busy}
+          >
+            {busy ? 'Enregistrement…' : 'Enregistrer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* =========================================================
    APP
 ========================================================= */
@@ -3600,6 +4157,16 @@ export default function MeleeApp() {
   const [viewingEvaluationId, setViewingEvaluationId] =
     useState(null);
 
+  const [transactions, setTransactions] = useState(
+    []
+  );
+
+  const [showTransactionForm, setShowTransactionForm] =
+    useState(null);
+
+  const [financeProjectFilter, setFinanceProjectFilter] =
+    useState('all');
+
   /* =====================================================
      TOAST
   ===================================================== */
@@ -3629,6 +4196,7 @@ export default function MeleeApp() {
         documentsResult,
         playersResult,
         evaluationsResult,
+        transactionsResult,
       ] = await Promise.all([
         supabase
           .from('users')
@@ -3700,6 +4268,13 @@ export default function MeleeApp() {
           .order('created_at', {
             ascending: true,
           }),
+
+        supabase
+          .from('transactions')
+          .select('*')
+          .order('created_at', {
+            ascending: false,
+          }),
       ]);
 
       if (usersResult.error)
@@ -3731,6 +4306,9 @@ export default function MeleeApp() {
 
       if (evaluationsResult.error)
         throw evaluationsResult.error;
+
+      if (transactionsResult.error)
+        throw transactionsResult.error;
 
       setUsers(
         (usersResult.data || []).map(
@@ -3873,6 +4451,22 @@ export default function MeleeApp() {
             scores: e.scores || {},
             evaluatedBy: e.evaluated_by || '',
             createdAt: e.created_at,
+          })
+        )
+      );
+
+      setTransactions(
+        (transactionsResult.data || []).map(
+          (t) => ({
+            id: t.id,
+            projectId: t.project_id,
+            taskId: t.task_id,
+            type: t.type,
+            amount: Number(t.amount) || 0,
+            reason: t.reason || '',
+            documentId: t.document_id,
+            createdBy: t.created_by || '',
+            createdAt: t.created_at,
           })
         )
       );
@@ -4775,6 +5369,53 @@ export default function MeleeApp() {
     }
   }
 
+  async function uploadDocumentFile({
+    file,
+    name,
+    folderId,
+    projectId,
+    taskId,
+  }) {
+    const ext = file.name.includes('.')
+      ? file.name
+          .split('.')
+          .pop()
+          .replace(/[^a-zA-Z0-9]/g, '')
+      : '';
+
+    const path = `${genId()}${
+      ext ? '.' + ext : ''
+    }`;
+
+    const { error: uploadError } =
+      await supabase.storage
+        .from('documents')
+        .upload(path, file);
+
+    if (uploadError) throw uploadError;
+
+    const docId = genId();
+
+    const { error } =
+      await supabase
+        .from('documents')
+        .insert({
+          id: docId,
+          name,
+          storage_path: path,
+          mime_type: file.type || '',
+          size: file.size,
+          folder_id: folderId,
+          project_id: projectId,
+          task_id: taskId,
+          uploaded_by: session.displayName,
+        });
+
+    if (error) throw error;
+
+    return docId;
+  }
+
   async function uploadDocument({
     file,
     name,
@@ -4783,40 +5424,13 @@ export default function MeleeApp() {
     taskId,
   }) {
     try {
-      const ext = file.name.includes('.')
-        ? file.name
-            .split('.')
-            .pop()
-            .replace(/[^a-zA-Z0-9]/g, '')
-        : '';
-
-      const path = `${genId()}${
-        ext ? '.' + ext : ''
-      }`;
-
-      const { error: uploadError } =
-        await supabase.storage
-          .from('documents')
-          .upload(path, file);
-
-      if (uploadError) throw uploadError;
-
-      const { error } =
-        await supabase
-          .from('documents')
-          .insert({
-            id: genId(),
-            name,
-            storage_path: path,
-            mime_type: file.type || '',
-            size: file.size,
-            folder_id: folderId,
-            project_id: projectId,
-            task_id: taskId,
-            uploaded_by: session.displayName,
-          });
-
-      if (error) throw error;
+      await uploadDocumentFile({
+        file,
+        name,
+        folderId,
+        projectId,
+        taskId,
+      });
 
       await loadData();
 
@@ -4999,6 +5613,126 @@ export default function MeleeApp() {
 
       showToast(
         "Impossible de supprimer l'évaluation."
+      );
+    }
+  }
+
+  /* =====================================================
+     FINANCE
+  ===================================================== */
+
+  async function createTransaction(data) {
+    try {
+      let documentId = null;
+
+      if (data.file) {
+        documentId = await uploadDocumentFile({
+          file: data.file,
+          name: data.file.name,
+          folderId: null,
+          projectId: data.projectId,
+          taskId: data.taskId,
+        });
+      }
+
+      const { error } =
+        await supabase
+          .from('transactions')
+          .insert({
+            id: genId(),
+            project_id: data.projectId,
+            task_id: data.taskId,
+            type: data.type,
+            amount: data.amount,
+            reason: data.reason,
+            document_id: documentId,
+            created_by: session.displayName,
+          });
+
+      if (error) throw error;
+
+      await loadData();
+
+      setShowTransactionForm(null);
+
+      showToast('Mouvement enregistré.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'enregistrer le mouvement."
+      );
+    }
+  }
+
+  async function updateTransaction(id, data) {
+    try {
+      let documentId = data.removeDocument
+        ? null
+        : undefined;
+
+      if (data.file) {
+        documentId = await uploadDocumentFile({
+          file: data.file,
+          name: data.file.name,
+          folderId: null,
+          projectId: data.projectId,
+          taskId: data.taskId,
+        });
+      }
+
+      const updates = {
+        project_id: data.projectId,
+        task_id: data.taskId,
+        type: data.type,
+        amount: data.amount,
+        reason: data.reason,
+      };
+
+      if (documentId !== undefined) {
+        updates.document_id = documentId;
+      }
+
+      const { error } =
+        await supabase
+          .from('transactions')
+          .update(updates)
+          .eq('id', id);
+
+      if (error) throw error;
+
+      await loadData();
+
+      setShowTransactionForm(null);
+
+      showToast('Mouvement mis à jour.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de modifier le mouvement.'
+      );
+    }
+  }
+
+  async function deleteTransaction(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('transactions')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      await loadData();
+
+      showToast('Mouvement supprimé.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de supprimer le mouvement.'
       );
     }
   }
@@ -5277,6 +6011,33 @@ export default function MeleeApp() {
         (e) => e.id === viewingEvaluationId
       ) || playerEvaluations[0]
     : playerEvaluations[0];
+
+  const visibleTransactions = useMemo(
+    () =>
+      financeProjectFilter === 'all'
+        ? transactions
+        : transactions.filter(
+            (t) =>
+              t.projectId === financeProjectFilter
+          ),
+    [transactions, financeProjectFilter]
+  );
+
+  const financeTotals = (list) => {
+    const totalIn = list
+      .filter((t) => t.type === 'in')
+      .reduce((a, t) => a + t.amount, 0);
+
+    const totalOut = list
+      .filter((t) => t.type === 'out')
+      .reduce((a, t) => a + t.amount, 0);
+
+    return {
+      totalIn,
+      totalOut,
+      balance: totalIn - totalOut,
+    };
+  };
 
   const now = new Date();
 
@@ -6146,6 +6907,151 @@ export default function MeleeApp() {
                         />
                       ))
                   )}
+
+                  <div className="flex items-center justify-between mt-6">
+                    <h2 className="font-display text-lg">
+                      Finances
+                    </h2>
+
+                    <button
+                      className="btn-secondary"
+                      onClick={() =>
+                        setShowTransactionForm({
+                          projectId:
+                            selectedProject.id,
+                        })
+                      }
+                    >
+                      <Plus size={13} />
+                      Mouvement
+                    </button>
+                  </div>
+
+                  {(() => {
+                    const projectTransactions =
+                      transactions.filter(
+                        (t) =>
+                          t.projectId ===
+                          selectedProject.id
+                      );
+
+                    const totals = financeTotals(
+                      projectTransactions
+                    );
+
+                    if (
+                      projectTransactions.length ===
+                      0
+                    ) {
+                      return (
+                        <p
+                          className="text-sm mt-2"
+                          style={{
+                            color:
+                              'var(--ink-light)',
+                          }}
+                        >
+                          Aucun mouvement pour ce
+                          projet.
+                        </p>
+                      );
+                    }
+
+                    return (
+                      <>
+                        <div
+                          className="flex items-center gap-4 mt-2"
+                          style={{
+                            alignItems: 'center',
+                          }}
+                        >
+                          <DonutChart
+                            totalIn={
+                              totals.totalIn
+                            }
+                            totalOut={
+                              totals.totalOut
+                            }
+                            size={110}
+                          />
+
+                          <div
+                            style={{
+                              display: 'flex',
+                              flexDirection:
+                                'column',
+                              gap: 4,
+                            }}
+                          >
+                            <span
+                              className="text-xs"
+                              style={{
+                                color: '#2D6A4F',
+                              }}
+                            >
+                              Rentrées :{' '}
+                              {formatCurrency(
+                                totals.totalIn
+                              )}
+                            </span>
+
+                            <span
+                              className="text-xs"
+                              style={{
+                                color:
+                                  'var(--red)',
+                              }}
+                            >
+                              Dépenses :{' '}
+                              {formatCurrency(
+                                totals.totalOut
+                              )}
+                            </span>
+                          </div>
+                        </div>
+
+                        {projectTransactions
+                          .slice(0, 4)
+                          .map((transaction) => (
+                            <TransactionRow
+                              key={transaction.id}
+                              transaction={
+                                transaction
+                              }
+                              projects={projects}
+                              tasks={tasks}
+                              documents={
+                                documents
+                              }
+                              getDocumentUrl={
+                                getDocumentUrl
+                              }
+                              onEdit={(t) =>
+                                setShowTransactionForm(
+                                  { existing: t }
+                                )
+                              }
+                              onDelete={(t) =>
+                                setConfirmState({
+                                  message:
+                                    'Supprimer ce mouvement ?',
+                                  onConfirm:
+                                    async () => {
+                                      await deleteTransaction(
+                                        t.id
+                                      );
+
+                                      setConfirmState(
+                                        null
+                                      );
+                                    },
+                                })
+                              }
+                            />
+                          ))}
+                      </>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -7512,6 +8418,169 @@ export default function MeleeApp() {
                 </div>
               )}
 
+            {/* FINANCE */}
+
+            {activeTab === 'finance' && (
+              <div>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h1 className="font-display text-2xl">
+                    Finance
+                  </h1>
+
+                  <button
+                    className="btn-primary"
+                    onClick={() =>
+                      setShowTransactionForm({})
+                    }
+                  >
+                    <Plus size={14} />
+                    Mouvement
+                  </button>
+                </div>
+
+                <div className="pitch-divider" />
+
+                <div className="mb-4">
+                  <label>Projet</label>
+                  <select
+                    style={{ width: 'auto' }}
+                    value={financeProjectFilter}
+                    onChange={(e) =>
+                      setFinanceProjectFilter(
+                        e.target.value
+                      )
+                    }
+                  >
+                    <option value="all">
+                      Tous les projets
+                    </option>
+
+                    {projects.map((project) => (
+                      <option
+                        key={project.id}
+                        value={project.id}
+                      >
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div
+                  className="flex items-center gap-6 flex-wrap"
+                  style={{ alignItems: 'center' }}
+                >
+                  <DonutChart
+                    totalIn={
+                      financeTotals(
+                        visibleTransactions
+                      ).totalIn
+                    }
+                    totalOut={
+                      financeTotals(
+                        visibleTransactions
+                      ).totalOut
+                    }
+                  />
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 8,
+                    }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <TrendingUp
+                        size={16}
+                        color="#2D6A4F"
+                      />
+                      <span className="text-sm">
+                        Rentrées :{' '}
+                        <strong>
+                          {formatCurrency(
+                            financeTotals(
+                              visibleTransactions
+                            ).totalIn
+                          )}
+                        </strong>
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <TrendingDown
+                        size={16}
+                        color="var(--red)"
+                      />
+                      <span className="text-sm">
+                        Dépenses :{' '}
+                        <strong>
+                          {formatCurrency(
+                            financeTotals(
+                              visibleTransactions
+                            ).totalOut
+                          )}
+                        </strong>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pitch-divider" />
+
+                <h2 className="font-display text-lg">
+                  Mouvements
+                </h2>
+
+                {visibleTransactions.length === 0 ? (
+                  <p
+                    className="text-sm"
+                    style={{
+                      color: 'var(--ink-light)',
+                    }}
+                  >
+                    Aucun mouvement pour l'instant.
+                  </p>
+                ) : (
+                  visibleTransactions.map(
+                    (transaction) => (
+                      <TransactionRow
+                        key={transaction.id}
+                        transaction={transaction}
+                        projects={projects}
+                        tasks={tasks}
+                        documents={documents}
+                        getDocumentUrl={
+                          getDocumentUrl
+                        }
+                        onEdit={(t) =>
+                          setShowTransactionForm({
+                            existing: t,
+                          })
+                        }
+                        onDelete={(t) =>
+                          setConfirmState({
+                            message:
+                              'Supprimer ce mouvement ?',
+                            onConfirm:
+                              async () => {
+                                await deleteTransaction(
+                                  t.id
+                                );
+
+                                setConfirmState(
+                                  null
+                                );
+                              },
+                          })
+                        }
+                      />
+                    )
+                  )
+                )}
+              </div>
+            )}
+
             {/* PAGES EN CONSTRUCTION */}
 
             {[
@@ -7671,6 +8740,21 @@ export default function MeleeApp() {
             });
             setEditingTask(null);
           }}
+          taskCost={transactions.find(
+            (t) => t.taskId === editingTask.id
+          )}
+          onOpenCostForm={(existingCost) => {
+            setShowTransactionForm({
+              existing: existingCost || null,
+              projectId: editingTask.projectId,
+              taskId: editingTask.id,
+              type: 'out',
+            });
+            setEditingTask(null);
+          }}
+          onRemoveCost={(id) =>
+            deleteTransaction(id)
+          }
           onCancel={() => setEditingTask(null)}
         />
       )}
@@ -7747,6 +8831,38 @@ export default function MeleeApp() {
           }
           onCancel={() =>
             setShowEvaluationForm(false)
+          }
+        />
+      )}
+
+      {/* MOUVEMENT FINANCE */}
+
+      {showTransactionForm && (
+        <TransactionFormModal
+          existing={
+            showTransactionForm.existing || null
+          }
+          initialProjectId={
+            showTransactionForm.projectId || null
+          }
+          initialTaskId={
+            showTransactionForm.taskId || null
+          }
+          initialType={
+            showTransactionForm.type || null
+          }
+          projects={projects}
+          tasks={tasks}
+          onSubmit={(data) =>
+            showTransactionForm.existing
+              ? updateTransaction(
+                  showTransactionForm.existing.id,
+                  data
+                )
+              : createTransaction(data)
+          }
+          onCancel={() =>
+            setShowTransactionForm(null)
           }
         />
       )}
