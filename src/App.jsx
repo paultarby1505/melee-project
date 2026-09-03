@@ -420,7 +420,7 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
-const MAX_DOCUMENT_SIZE = 20 * 1024 * 1024;
+const MAX_DOCUMENT_SIZE = 50 * 1024 * 1024;
 
 function mapMessageRow(m) {
   return {
@@ -1836,7 +1836,7 @@ function DocumentUploadModal({
     if (!selected) return;
 
     if (selected.size > MAX_DOCUMENT_SIZE) {
-      setError('Le fichier dépasse 20 Mo.');
+      setError('Le fichier dépasse 50 Mo.');
       return;
     }
 
@@ -1895,7 +1895,7 @@ function DocumentUploadModal({
           style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
         >
           <div>
-            <label>Fichier (20 Mo max)</label>
+            <label>Fichier (50 Mo max)</label>
             <input
               type="file"
               onChange={handleFileChange}
