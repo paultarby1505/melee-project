@@ -4,6 +4,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Home as HomeIcon,
   FolderKanban,
@@ -4189,6 +4190,59 @@ export default function MeleeApp() {
     null
   );
 
+  const [navMenuPos, setNavMenuPos] = useState({
+    top: 0,
+    left: 0,
+  });
+
+  const navCloseTimer = useRef(null);
+
+  function cancelNavClose() {
+    if (navCloseTimer.current) {
+      clearTimeout(navCloseTimer.current);
+      navCloseTimer.current = null;
+    }
+  }
+
+  function scheduleNavClose() {
+    cancelNavClose();
+    navCloseTimer.current = setTimeout(() => {
+      setOpenNavMenu(null);
+    }, 150);
+  }
+
+  function openNavDropdown(item, triggerEl) {
+    cancelNavClose();
+    const rect = triggerEl.getBoundingClientRect();
+    setNavMenuPos({
+      top: rect.bottom,
+      left: rect.left,
+    });
+    setOpenNavMenu(item.id);
+  }
+
+  useEffect(() => {
+    if (!openNavMenu) return;
+    function handleOutsideClick(e) {
+      if (
+        e.target.closest('.nav-dropdown') ||
+        e.target.closest('.nav-dropdown-menu')
+      ) {
+        return;
+      }
+      setOpenNavMenu(null);
+    }
+    document.addEventListener(
+      'mousedown',
+      handleOutsideClick
+    );
+    return () =>
+      document.removeEventListener(
+        'mousedown',
+        handleOutsideClick
+      );
+  }, [openNavMenu]);
+
   const [chatDrawerOpen, setChatDrawerOpen] =
     useState(false);
 
@@ -6083,6 +6137,24 @@ export default function MeleeApp() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Work+Sans:wght@400;500;600;700&display=swap');
 
+        :root {
+          --pitch-dark:#1A1A1A;
+          --pitch:#E3B100;
+          --pitch-tint:#FFF4D6;
+          --chalk:#F7F5F0;
+          --ink:#20241F;
+          --ink-light:#5C6259;
+          --tan:#B08968;
+          --tan-text:#8A5A34;
+          --tan-tint:#F1E6DC;
+          --amber:#B9791F;
+          --amber-tint:#FBEBD0;
+          --red:#B23A30;
+          --red-tint:#F6DEDC;
+          --line:#E4E0D6;
+          --white:#FFFFFF;
+        }
+
         .melee-app {
           --pitch-dark:#1A1A1A;
           --pitch:#E3B100;
@@ -6200,10 +6272,10 @@ export default function MeleeApp() {
           position:relative;
         }
 
-        .melee-app .nav-dropdown-menu {
-          position:absolute;
-          top:100%;
-          left:0;
+        .nav-dropdown-menu {
+          box-sizing:border-box;
+          font-family:'Work Sans',sans-serif;
+          position:fixed;
           background:var(--white);
           border:1px solid var(--line);
           border-radius:10px;
@@ -6216,7 +6288,9 @@ export default function MeleeApp() {
           gap:2px;
         }
 
-        .melee-app .nav-dropdown-item {
+        .nav-dropdown-item {
+          box-sizing:border-box;
+          font-family:'Work Sans',sans-serif;
           display:flex;
           align-items:center;
           gap:8px;
@@ -6232,8 +6306,8 @@ export default function MeleeApp() {
           text-align:left;
         }
 
-        .melee-app .nav-dropdown-item:hover,
-        .melee-app .nav-dropdown-item.active {
+        .nav-dropdown-item:hover,
+        .nav-dropdown-item.active {
           background:var(--pitch-tint);
           color:var(--pitch-dark);
         }
@@ -6562,22 +6636,23 @@ export default function MeleeApp() {
               <div
                 key={item.id}
                 className="nav-dropdown"
-                onMouseEnter={() =>
-                  setOpenNavMenu(item.id)
+                onMouseEnter={(e) =>
+                  openNavDropdown(
+                    item,
+                    e.currentTarget
+                  )
                 }
-                onMouseLeave={() =>
-                  setOpenNavMenu(null)
-                }
+                onMouseLeave={scheduleNavClose}
               >
                 <button
                   className={`nav-tab ${
                     isActiveGroup ? 'active' : ''
                   }`}
-                  onClick={() =>
-                    setOpenNavMenu(
-                      openNavMenu === item.id
-                        ? null
-                        : item.id
+                  onClick={(e) =>
+                    openNavDropdown(
+                      item,
+                      e.currentTarget
+                        .parentElement
                     )
                   }
                 >
@@ -6585,35 +6660,52 @@ export default function MeleeApp() {
                   {item.label}
                 </button>
 
-                {openNavMenu === item.id && (
-                  <div className="nav-dropdown-menu">
-                    {item.children.map(
-                      (child) => (
-                        <button
-                          key={child.id}
-                          className={`nav-dropdown-item ${
-                            activeTab ===
-                            child.id
-                              ? 'active'
-                              : ''
-                          }`}
-                          onClick={() =>
-                            goToTab(child.id)
-                          }
-                        >
-                          <child.icon
-                            size={14}
-                          />
-                          {child.label}
+                {openNavMenu === item.id &&
+                  createPortal(
+                    <div
+                      className="nav-dropdown-menu"
+                      style={{
+                        top: navMenuPos.top,
+                        left: navMenuPos.left,
+                      }}
+                      onMouseEnter={
+                        cancelNavClose
+                      }
+                      onMouseLeave={
+                        scheduleNavClose
+                      }
+                    >
+                      {item.children.map(
+                        (child) => (
+                          <button
+                            key={child.id}
+                            className={`nav-dropdown-item ${
+                              activeTab ===
+                              child.id
+                                ? 'active'
+                                : ''
+                            }`}
+                            onClick={() => {
+                              goToTab(child.id);
+                              setOpenNavMenu(
+                                null
+                              );
+                            }}
+                          >
+                            <child.icon
+                              size={14}
+                            />
+                            {child.label}
 
-                          {child.stub && (
-                            <span className="stub-dot" />
-                          )}
-                        </button>
-                      )
-                    )}
-                  </div>
-                )}
+                            {child.stub && (
+                              <span className="stub-dot" />
+                            )}
+                          </button>
+                        )
+                      )}
+                    </div>,
+                    document.body
+                  )}
               </div>
             );
           })}
