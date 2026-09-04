@@ -5430,7 +5430,7 @@ function WorkflowCanvas({
                     left: pos.x,
                     top: pos.y,
                     background: isDone
-                      ? '#E3EEE8'
+                      ? '#8FD1A5'
                       : isSoon
                       ? 'var(--amber-tint)'
                       : 'var(--white)',
