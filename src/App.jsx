@@ -705,11 +705,7 @@ function TaskRow({
           className={`icon-btn ${
             isOnCanvas ? 'active' : ''
           }`}
-          title={
-            isOnCanvas
-              ? 'Retirer du canvas'
-              : 'Ajouter au canvas'
-          }
+          title="Placer dans un workflow"
           onClick={() => onToggleCanvas(task)}
         >
           <Workflow size={14} />
@@ -1910,6 +1906,178 @@ function FolderFormModal({ onSubmit, onCancel }) {
 
           <button className="btn-primary" onClick={submit}>
             Créer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WorkflowBoardFormModal({
+  initial,
+  onSubmit,
+  onCancel,
+}) {
+  const [name, setName] = useState(
+    initial?.name || ''
+  );
+
+  const [error, setError] = useState('');
+
+  function submit() {
+    if (!name.trim()) {
+      setError('Le nom est obligatoire.');
+      return;
+    }
+
+    onSubmit(name.trim());
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          {initial
+            ? 'Renommer le workflow'
+            : 'Nouveau workflow'}
+        </h3>
+
+        <div className="mt-4">
+          <label>Nom du workflow</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+            placeholder="Ex. Préparation tournoi"
+            onKeyDown={(e) =>
+              e.key === 'Enter' && submit()
+            }
+          />
+
+          {error && (
+            <p
+              className="text-xs mt-1"
+              style={{ color: 'var(--red)' }}
+            >
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            {initial ? 'Renommer' : 'Créer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TaskCanvasPickerModal({
+  task,
+  boards,
+  nodesForTask,
+  onToggleBoard,
+  onClose,
+}) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onClose}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          Placer dans un workflow
+        </h3>
+
+        <p
+          className="text-sm mt-1"
+          style={{ color: 'var(--ink-light)' }}
+        >
+          {task.title}
+        </p>
+
+        <div
+          className="mt-4"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+          }}
+        >
+          {boards.length === 0 ? (
+            <p
+              className="text-sm"
+              style={{ color: 'var(--ink-light)' }}
+            >
+              Aucun workflow pour ce projet. Créez-en un
+              d'abord avec le bouton « + » au-dessus du
+              canvas.
+            </p>
+          ) : (
+            boards.map((board) => {
+              const inBoard = nodesForTask.some(
+                (n) => n.boardId === board.id
+              );
+
+              return (
+                <button
+                  key={board.id}
+                  type="button"
+                  className="btn-secondary"
+                  style={{
+                    justifyContent: 'space-between',
+                    background: inBoard
+                      ? 'var(--pitch-tint)'
+                      : 'var(--white)',
+                    borderColor: inBoard
+                      ? 'var(--pitch)'
+                      : 'var(--line)',
+                    color: inBoard
+                      ? 'var(--pitch-dark)'
+                      : 'var(--ink)',
+                  }}
+                  onClick={() =>
+                    onToggleBoard(board.id)
+                  }
+                >
+                  <span className="flex items-center gap-2">
+                    {inBoard && <Check size={14} />}
+                    {board.name}
+                  </span>
+                </button>
+              );
+            })
+          )}
+        </div>
+
+        <div className="flex justify-end mt-5">
+          <button className="btn-secondary" onClick={onClose}>
+            Fermer
           </button>
         </div>
       </div>
@@ -4829,11 +4997,23 @@ export default function MeleeApp() {
   const [tasks, setTasks] =
     useState([]);
 
+  const [workflowBoards, setWorkflowBoards] =
+    useState([]);
+
   const [workflowNodes, setWorkflowNodes] =
     useState([]);
 
   const [workflowEdges, setWorkflowEdges] =
     useState([]);
+
+  const [selectedBoardId, setSelectedBoardId] =
+    useState(null);
+
+  const [showWorkflowBoardForm, setShowWorkflowBoardForm] =
+    useState(null);
+
+  const [taskCanvasPicker, setTaskCanvasPicker] =
+    useState(null);
 
   const [dataLoaded, setDataLoaded] =
     useState(false);
@@ -5059,6 +5239,7 @@ export default function MeleeApp() {
         playersResult,
         evaluationsResult,
         transactionsResult,
+        workflowBoardsResult,
         workflowNodesResult,
         workflowEdgesResult,
       ] = await Promise.all([
@@ -5141,6 +5322,13 @@ export default function MeleeApp() {
           }),
 
         supabase
+          .from('workflow_boards')
+          .select('*')
+          .order('position', {
+            ascending: true,
+          }),
+
+        supabase
           .from('workflow_nodes')
           .select('*')
           .order('created_at', {
@@ -5187,6 +5375,9 @@ export default function MeleeApp() {
 
       if (transactionsResult.error)
         throw transactionsResult.error;
+
+      if (workflowBoardsResult.error)
+        throw workflowBoardsResult.error;
 
       if (workflowNodesResult.error)
         throw workflowNodesResult.error;
@@ -5355,11 +5546,25 @@ export default function MeleeApp() {
         )
       );
 
+      setWorkflowBoards(
+        (workflowBoardsResult.data || []).map(
+          (b) => ({
+            id: b.id,
+            projectId: b.project_id,
+            name: b.name,
+            position: b.position || 0,
+            createdBy: b.created_by || '',
+            createdAt: b.created_at,
+          })
+        )
+      );
+
       setWorkflowNodes(
         (workflowNodesResult.data || []).map(
           (n) => ({
             id: n.id,
             projectId: n.project_id,
+            boardId: n.board_id,
             taskId: n.task_id,
             kind: n.kind,
             content: n.content || '',
@@ -5376,6 +5581,7 @@ export default function MeleeApp() {
           (e) => ({
             id: e.id,
             projectId: e.project_id,
+            boardId: e.board_id,
             sourceId: e.source_id,
             targetId: e.target_id,
             createdAt: e.created_at,
@@ -6110,9 +6316,95 @@ export default function MeleeApp() {
      CANVAS DE WORKFLOW
   ===================================================== */
 
-  function nextWorkflowNodePosition(projectId) {
+  async function createWorkflowBoard(
+    projectId,
+    name
+  ) {
+    try {
+      const position = workflowBoards.filter(
+        (b) => b.projectId === projectId
+      ).length;
+
+      const id = genId();
+
+      const { error } =
+        await supabase
+          .from('workflow_boards')
+          .insert({
+            id,
+            project_id: projectId,
+            name,
+            position,
+            created_by: session.displayName,
+          });
+
+      if (error) throw error;
+
+      await loadData();
+
+      setSelectedBoardId(id);
+      setShowWorkflowBoardForm(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible de créer le workflow."
+      );
+    }
+  }
+
+  async function renameWorkflowBoard(
+    boardId,
+    name
+  ) {
+    try {
+      const { error } =
+        await supabase
+          .from('workflow_boards')
+          .update({ name })
+          .eq('id', boardId);
+
+      if (error) throw error;
+
+      await loadData();
+
+      setShowWorkflowBoardForm(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible de renommer le workflow."
+      );
+    }
+  }
+
+  async function deleteWorkflowBoard(boardId) {
+    try {
+      const { error } =
+        await supabase
+          .from('workflow_boards')
+          .delete()
+          .eq('id', boardId);
+
+      if (error) throw error;
+
+      await loadData();
+
+      setSelectedBoardId((current) =>
+        current === boardId ? null : current
+      );
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de supprimer le workflow.'
+      );
+    }
+  }
+
+  function nextWorkflowNodePosition(boardId) {
     const count = workflowNodes.filter(
-      (n) => n.projectId === projectId
+      (n) => n.boardId === boardId
     ).length;
 
     const col = count % 4;
@@ -6124,13 +6416,14 @@ export default function MeleeApp() {
     };
   }
 
-  async function toggleTaskOnCanvas(
+  async function toggleTaskInBoard(
+    boardId,
     projectId,
     task
   ) {
     const existing = workflowNodes.find(
       (n) =>
-        n.projectId === projectId &&
+        n.boardId === boardId &&
         n.taskId === task.id
     );
 
@@ -6141,7 +6434,7 @@ export default function MeleeApp() {
 
     try {
       const pos = nextWorkflowNodePosition(
-        projectId
+        boardId
       );
 
       const { error } =
@@ -6150,6 +6443,7 @@ export default function MeleeApp() {
           .insert({
             id: genId(),
             project_id: projectId,
+            board_id: boardId,
             task_id: task.id,
             kind: 'task',
             pos_x: pos.x,
@@ -6169,10 +6463,13 @@ export default function MeleeApp() {
     }
   }
 
-  async function addWorkflowNote(projectId) {
+  async function addWorkflowNote(
+    boardId,
+    projectId
+  ) {
     try {
       const pos = nextWorkflowNodePosition(
-        projectId
+        boardId
       );
 
       const { error } =
@@ -6181,6 +6478,7 @@ export default function MeleeApp() {
           .insert({
             id: genId(),
             project_id: projectId,
+            board_id: boardId,
             kind: 'note',
             content: '',
             pos_x: pos.x,
@@ -6300,11 +6598,13 @@ export default function MeleeApp() {
 
   async function addWorkflowEdge(
     sourceId,
-    targetId
+    targetId,
+    boardId
   ) {
     const tempEdge = {
       id: genId(),
       projectId: selectedProjectId,
+      boardId,
       sourceId,
       targetId,
     };
@@ -6321,6 +6621,7 @@ export default function MeleeApp() {
           .insert({
             id: tempEdge.id,
             project_id: selectedProjectId,
+            board_id: boardId,
             source_id: sourceId,
             target_id: targetId,
           });
@@ -6950,6 +7251,10 @@ export default function MeleeApp() {
         )
       : null;
 
+  useEffect(() => {
+    setSelectedBoardId(null);
+  }, [selectedProjectId]);
+
   const selectedProjectTasks =
     selectedProject
       ? tasks.filter(
@@ -6978,15 +7283,46 @@ export default function MeleeApp() {
     [workflowNodes, selectedProject]
   );
 
-  const projectWorkflowEdges = useMemo(
+  const projectWorkflowBoards = useMemo(
     () =>
       selectedProject
-        ? workflowEdges.filter(
-            (e) =>
-              e.projectId === selectedProject.id
+        ? workflowBoards
+            .filter(
+              (b) =>
+                b.projectId === selectedProject.id
+            )
+            .sort(
+              (a, b) => a.position - b.position
+            )
+        : [],
+    [workflowBoards, selectedProject]
+  );
+
+  const selectedBoard =
+    projectWorkflowBoards.find(
+      (b) => b.id === selectedBoardId
+    ) ||
+    projectWorkflowBoards[0] ||
+    null;
+
+  const boardWorkflowNodes = useMemo(
+    () =>
+      selectedBoard
+        ? workflowNodes.filter(
+            (n) => n.boardId === selectedBoard.id
           )
         : [],
-    [workflowEdges, selectedProject]
+    [workflowNodes, selectedBoard]
+  );
+
+  const boardWorkflowEdges = useMemo(
+    () =>
+      selectedBoard
+        ? workflowEdges.filter(
+            (e) => e.boardId === selectedBoard.id
+          )
+        : [],
+    [workflowEdges, selectedBoard]
   );
 
   const activeProjectsCount =
@@ -7637,6 +7973,83 @@ export default function MeleeApp() {
 
         .melee-app .workflow-canvas-block {
           margin-top:10px;
+        }
+
+        .melee-app .workflow-board-tabs {
+          display:flex;
+          align-items:center;
+          gap:6px;
+          flex-wrap:wrap;
+          margin-top:10px;
+        }
+
+        .melee-app .workflow-board-tab {
+          display:flex;
+          align-items:center;
+          gap:2px;
+          background:var(--white);
+          border:1px solid var(--line);
+          border-radius:999px;
+          padding:2px;
+        }
+
+        .melee-app .workflow-board-tab.active {
+          border-color:var(--pitch);
+          background:var(--pitch-tint);
+        }
+
+        .melee-app .workflow-board-tab-label {
+          font-size:13px;
+          font-weight:600;
+          color:var(--ink-light);
+          background:none;
+          border:none;
+          cursor:pointer;
+          padding:6px 12px;
+          border-radius:999px;
+        }
+
+        .melee-app .workflow-board-tab.active .workflow-board-tab-label {
+          color:var(--pitch-dark);
+        }
+
+        .melee-app .workflow-board-tab-icon {
+          width:22px;
+          height:22px;
+          border-radius:50%;
+          border:none;
+          background:none;
+          color:var(--ink-light);
+          cursor:pointer;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+        }
+
+        .melee-app .workflow-board-tab-icon:hover {
+          background:rgba(22,20,10,.08);
+          color:var(--ink);
+        }
+
+        .melee-app .workflow-board-tab-add {
+          width:30px;
+          height:30px;
+          border-radius:50%;
+          border:1px dashed var(--line);
+          background:var(--white);
+          color:var(--ink-light);
+          cursor:pointer;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+        }
+
+        .melee-app .workflow-empty-block {
+          margin-top:10px;
+          padding:24px;
+          border:1px dashed var(--line);
+          border-radius:12px;
+          text-align:center;
         }
 
         .melee-app .workflow-toolbar {
@@ -8333,34 +8746,147 @@ export default function MeleeApp() {
                     Workflow
                   </h2>
 
-                  <WorkflowCanvas
-                    nodes={projectWorkflowNodes}
-                    edges={projectWorkflowEdges}
-                    tasksById={tasksById}
-                    getMemberColor={
-                      getMemberColor
-                    }
-                    onMoveNode={
-                      moveWorkflowNode
-                    }
-                    onAddEdge={
-                      addWorkflowEdge
-                    }
-                    onDeleteEdge={
-                      deleteWorkflowEdge
-                    }
-                    onRemoveNode={
-                      removeWorkflowNode
-                    }
-                    onUpdateNoteContent={
-                      updateWorkflowNoteContent
-                    }
-                    onAddNote={() =>
-                      addWorkflowNote(
-                        selectedProject.id
+                  <div className="workflow-board-tabs">
+                    {projectWorkflowBoards.map(
+                      (board) => (
+                        <div
+                          key={board.id}
+                          className={`workflow-board-tab ${
+                            selectedBoard?.id ===
+                            board.id
+                              ? 'active'
+                              : ''
+                          }`}
+                        >
+                          <button
+                            className="workflow-board-tab-label"
+                            onClick={() =>
+                              setSelectedBoardId(
+                                board.id
+                              )
+                            }
+                          >
+                            {board.name}
+                          </button>
+
+                          {selectedBoard?.id ===
+                            board.id && (
+                            <>
+                              <button
+                                className="workflow-board-tab-icon"
+                                title="Renommer"
+                                onClick={() =>
+                                  setShowWorkflowBoardForm(
+                                    board
+                                  )
+                                }
+                              >
+                                <Pencil size={11} />
+                              </button>
+
+                              <button
+                                className="workflow-board-tab-icon"
+                                title="Supprimer"
+                                onClick={() =>
+                                  setConfirmState({
+                                    message: `Supprimer le workflow "${board.name}" ? Les bulles et flèches qu'il contient seront perdues.`,
+                                    onConfirm:
+                                      async () => {
+                                        await deleteWorkflowBoard(
+                                          board.id
+                                        );
+
+                                        setConfirmState(
+                                          null
+                                        );
+                                      },
+                                  })
+                                }
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       )
-                    }
-                  />
+                    )}
+
+                    <button
+                      className="workflow-board-tab-add"
+                      title="Nouveau workflow"
+                      onClick={() =>
+                        setShowWorkflowBoardForm(
+                          'new'
+                        )
+                      }
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
+
+                  {projectWorkflowBoards.length ===
+                  0 ? (
+                    <div className="workflow-empty-block">
+                      <p
+                        className="text-sm"
+                        style={{
+                          color: 'var(--ink-light)',
+                        }}
+                      >
+                        Aucun workflow pour ce projet.
+                      </p>
+
+                      <button
+                        className="btn-secondary mt-2"
+                        onClick={() =>
+                          setShowWorkflowBoardForm(
+                            'new'
+                          )
+                        }
+                      >
+                        <Plus size={13} />
+                        Créer un workflow
+                      </button>
+                    </div>
+                  ) : (
+                    <WorkflowCanvas
+                      key={selectedBoard.id}
+                      nodes={boardWorkflowNodes}
+                      edges={boardWorkflowEdges}
+                      tasksById={tasksById}
+                      getMemberColor={
+                        getMemberColor
+                      }
+                      onMoveNode={
+                        moveWorkflowNode
+                      }
+                      onAddEdge={(
+                        sourceId,
+                        targetId
+                      ) =>
+                        addWorkflowEdge(
+                          sourceId,
+                          targetId,
+                          selectedBoard.id
+                        )
+                      }
+                      onDeleteEdge={
+                        deleteWorkflowEdge
+                      }
+                      onRemoveNode={
+                        removeWorkflowNode
+                      }
+                      onUpdateNoteContent={
+                        updateWorkflowNoteContent
+                      }
+                      onAddNote={() =>
+                        addWorkflowNote(
+                          selectedBoard.id,
+                          selectedProject.id
+                        )
+                      }
+                    />
+                  )}
 
                   {selectedProject.description && (
                     <p className="text-sm mt-3">
@@ -8441,10 +8967,7 @@ export default function MeleeApp() {
                           setEditingTask
                         }
                         onToggleCanvas={(t) =>
-                          toggleTaskOnCanvas(
-                            selectedProject.id,
-                            t
-                          )
+                          setTaskCanvasPicker(t)
                         }
                         isOnCanvas={projectWorkflowNodes.some(
                           (n) =>
@@ -10369,6 +10892,57 @@ export default function MeleeApp() {
         <FolderFormModal
           onSubmit={createFolder}
           onCancel={() => setShowFolderForm(false)}
+        />
+      )}
+
+      {/* WORKFLOW : NOUVEAU / RENOMMER */}
+
+      {showWorkflowBoardForm && (
+        <WorkflowBoardFormModal
+          initial={
+            typeof showWorkflowBoardForm ===
+            'object'
+              ? showWorkflowBoardForm
+              : null
+          }
+          onSubmit={(name) =>
+            typeof showWorkflowBoardForm ===
+            'object'
+              ? renameWorkflowBoard(
+                  showWorkflowBoardForm.id,
+                  name
+                )
+              : createWorkflowBoard(
+                  selectedProject.id,
+                  name
+                )
+          }
+          onCancel={() =>
+            setShowWorkflowBoardForm(null)
+          }
+        />
+      )}
+
+      {/* WORKFLOW : PLACER UNE TACHE */}
+
+      {taskCanvasPicker && (
+        <TaskCanvasPickerModal
+          task={taskCanvasPicker}
+          boards={projectWorkflowBoards}
+          nodesForTask={projectWorkflowNodes.filter(
+            (n) =>
+              n.taskId === taskCanvasPicker.id
+          )}
+          onToggleBoard={(boardId) =>
+            toggleTaskInBoard(
+              boardId,
+              selectedProject.id,
+              taskCanvasPicker
+            )
+          }
+          onClose={() =>
+            setTaskCanvasPicker(null)
+          }
         />
       )}
 
