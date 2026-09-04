@@ -4234,6 +4234,12 @@ const WORKFLOW_ZOOM_MIN = 0.4;
 const WORKFLOW_ZOOM_MAX = 2.5;
 const WORKFLOW_CANVAS_W = 4000;
 const WORKFLOW_CANVAS_H = 3000;
+const WORKFLOW_HANDLE_SIDES = [
+  'top',
+  'right',
+  'bottom',
+  'left',
+];
 
 function clipToBox(cx, cy, halfW, halfH, dx, dy) {
   if (dx === 0 && dy === 0) return { x: cx, y: cy };
@@ -4876,13 +4882,21 @@ function WorkflowCanvas({
                     </p>
                   )}
 
-                  <div
-                    className="workflow-node-handle"
-                    title="Glisser pour relier à une autre bulle"
-                    onMouseDown={(e) =>
-                      handleHandleMouseDown(e, node)
-                    }
-                  />
+                  {WORKFLOW_HANDLE_SIDES.map(
+                    (side) => (
+                      <div
+                        key={side}
+                        className={`workflow-node-handle ${side}`}
+                        title="Glisser pour relier à une autre bulle"
+                        onMouseDown={(e) =>
+                          handleHandleMouseDown(
+                            e,
+                            node
+                          )
+                        }
+                      />
+                    )
+                  )}
                 </div>
               );
             }
@@ -4954,13 +4968,21 @@ function WorkflowCanvas({
                   </p>
                 )}
 
-                <div
-                  className="workflow-node-handle"
-                  title="Glisser pour relier à une autre bulle"
-                  onMouseDown={(e) =>
-                    handleHandleMouseDown(e, node)
-                  }
-                />
+                {WORKFLOW_HANDLE_SIDES.map(
+                  (side) => (
+                    <div
+                      key={side}
+                      className={`workflow-node-handle ${side}`}
+                      title="Glisser pour relier à une autre bulle"
+                      onMouseDown={(e) =>
+                        handleHandleMouseDown(
+                          e,
+                          node
+                        )
+                      }
+                    />
+                  )
+                )}
               </div>
             );
           })}
@@ -8189,16 +8211,53 @@ export default function MeleeApp() {
 
         .melee-app .workflow-node-handle {
           position:absolute;
-          top:50%;
-          right:-7px;
-          transform:translateY(-50%);
-          width:14px;
-          height:14px;
+          width:24px;
+          height:24px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          cursor:crosshair;
+          z-index:4;
+        }
+
+        .melee-app .workflow-node-handle::after {
+          content:'';
+          width:12px;
+          height:12px;
           border-radius:50%;
           background:var(--pitch-dark);
           border:2px solid var(--white);
-          cursor:crosshair;
-          z-index:3;
+          box-shadow:0 0 0 1px var(--pitch-dark);
+          transition:transform .12s ease, background .12s ease;
+        }
+
+        .melee-app .workflow-node-handle:hover::after {
+          transform:scale(1.4);
+          background:var(--pitch);
+        }
+
+        .melee-app .workflow-node-handle.top {
+          top:-12px;
+          left:50%;
+          transform:translateX(-50%);
+        }
+
+        .melee-app .workflow-node-handle.right {
+          top:50%;
+          right:-12px;
+          transform:translateY(-50%);
+        }
+
+        .melee-app .workflow-node-handle.bottom {
+          bottom:-12px;
+          left:50%;
+          transform:translateX(-50%);
+        }
+
+        .melee-app .workflow-node-handle.left {
+          top:50%;
+          left:-12px;
+          transform:translateY(-50%);
         }
 
         .melee-app .workflow-note-text {
