@@ -825,6 +825,7 @@ ${H}`}class st extends Error{constructor({message:t,code:s,cause:a,name:l}){var 
           position:absolute;
           top:0;
           left:0;
+          overflow:visible;
           pointer-events:none;
         }
 

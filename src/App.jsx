@@ -8205,6 +8205,7 @@ export default function MeleeApp() {
           position:absolute;
           top:0;
           left:0;
+          overflow:visible;
           pointer-events:none;
         }
 
