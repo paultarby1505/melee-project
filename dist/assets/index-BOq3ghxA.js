@@ -797,9 +797,7 @@ ${W}`}class rt extends Error{constructor({message:t,code:s,cause:a,name:l}){var 
           height:440px;
           border:1px solid var(--line);
           border-radius:12px;
-          background:var(--chalk);
-          background-image:radial-gradient(var(--line) 1px, transparent 1px);
-          background-size:18px 18px;
+          background:#EAEAE6;
           overflow:hidden;
           user-select:none;
         }
@@ -809,6 +807,17 @@ ${W}`}class rt extends Error{constructor({message:t,code:s,cause:a,name:l}){var 
           top:0;
           left:0;
           transform-origin:0 0;
+          background-color:#EAEAE6;
+          background-image:
+            linear-gradient(to right, #D6D6D1 1px, transparent 1px),
+            linear-gradient(to bottom, #D6D6D1 1px, transparent 1px),
+            linear-gradient(to right, #C7C7C1 1px, transparent 1px),
+            linear-gradient(to bottom, #C7C7C1 1px, transparent 1px);
+          background-size:
+            20px 20px,
+            20px 20px,
+            100px 100px,
+            100px 100px;
         }
 
         .melee-app .workflow-edges-svg {
