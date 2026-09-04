@@ -48,6 +48,11 @@ import {
   TrendingUp,
   TrendingDown,
   Receipt,
+  ZoomIn,
+  ZoomOut,
+  Maximize,
+  Type,
+  Workflow,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -580,6 +585,8 @@ function TaskRow({
   onDelete,
   onEdit,
   getMemberColor,
+  onToggleCanvas,
+  isOnCanvas,
 }) {
   const overdue =
     task.status !== 'termine' &&
@@ -692,6 +699,22 @@ function TaskRow({
           )}
         </div>
       </div>
+
+      {onToggleCanvas && (
+        <button
+          className={`icon-btn ${
+            isOnCanvas ? 'active' : ''
+          }`}
+          title={
+            isOnCanvas
+              ? 'Retirer du canvas'
+              : 'Ajouter au canvas'
+          }
+          onClick={() => onToggleCanvas(task)}
+        >
+          <Workflow size={14} />
+        </button>
+      )}
 
       {onEdit && (
         <button
@@ -4036,6 +4059,760 @@ function TransactionFormModal({
 }
 
 /* =========================================================
+   CANVAS DE WORKFLOW
+========================================================= */
+
+const WORKFLOW_ZOOM_MIN = 0.4;
+const WORKFLOW_ZOOM_MAX = 2.5;
+const WORKFLOW_CANVAS_W = 4000;
+const WORKFLOW_CANVAS_H = 3000;
+
+function clipToBox(cx, cy, halfW, halfH, dx, dy) {
+  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+
+  const scaleX =
+    dx !== 0 ? halfW / Math.abs(dx) : Infinity;
+
+  const scaleY =
+    dy !== 0 ? halfH / Math.abs(dy) : Infinity;
+
+  const scale = Math.min(scaleX, scaleY);
+
+  return { x: cx + dx * scale, y: cy + dy * scale };
+}
+
+function WorkflowCanvas({
+  nodes,
+  edges,
+  tasksById,
+  getMemberColor,
+  onMoveNode,
+  onAddEdge,
+  onDeleteEdge,
+  onRemoveNode,
+  onUpdateNoteContent,
+  onAddNote,
+}) {
+  const wrapRef = useRef(null);
+  const nodeElRefs = useRef({});
+
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 60, y: 40 });
+  const [nodeSizes, setNodeSizes] = useState({});
+  const [dragNode, setDragNode] = useState(null);
+  const [livePositions, setLivePositions] = useState(
+    {}
+  );
+  const [panState, setPanState] = useState(null);
+  const [connectFrom, setConnectFrom] = useState(null);
+  const [pointer, setPointer] = useState(null);
+  const [selectedEdgeId, setSelectedEdgeId] =
+    useState(null);
+  const [editingNoteId, setEditingNoteId] =
+    useState(null);
+  const [noteDraft, setNoteDraft] = useState('');
+
+  const stateRef = useRef({});
+
+  stateRef.current = {
+    dragNode,
+    connectFrom,
+    zoom,
+    pan,
+    edges,
+    panState,
+  };
+
+  useEffect(() => {
+    const next = {};
+    let changed =
+      Object.keys(nodeSizes).length !== nodes.length;
+
+    nodes.forEach((n) => {
+      const el = nodeElRefs.current[n.id];
+      const w = el ? el.offsetWidth : 200;
+      const h = el ? el.offsetHeight : 70;
+
+      next[n.id] = { w, h };
+
+      const prev = nodeSizes[n.id];
+
+      if (!prev || prev.w !== w || prev.h !== h) {
+        changed = true;
+      }
+    });
+
+    if (changed) setNodeSizes(next);
+    // eslint-disable-next-line
+  }, [nodes]);
+
+  function getPos(node) {
+    return (
+      livePositions[node.id] || {
+        x: node.posX,
+        y: node.posY,
+      }
+    );
+  }
+
+  function getBox(node) {
+    const pos = getPos(node);
+    const size = nodeSizes[node.id] || { w: 200, h: 70 };
+
+    return {
+      cx: pos.x + size.w / 2,
+      cy: pos.y + size.h / 2,
+      halfW: size.w / 2,
+      halfH: size.h / 2,
+    };
+  }
+
+  function zoomBy(factor) {
+    const rect = wrapRef.current.getBoundingClientRect();
+    const cursorX = rect.width / 2;
+    const cursorY = rect.height / 2;
+    const canvasX = (cursorX - pan.x) / zoom;
+    const canvasY = (cursorY - pan.y) / zoom;
+
+    const nextZoom = Math.min(
+      WORKFLOW_ZOOM_MAX,
+      Math.max(WORKFLOW_ZOOM_MIN, zoom * factor)
+    );
+
+    setPan({
+      x: cursorX - canvasX * nextZoom,
+      y: cursorY - canvasY * nextZoom,
+    });
+
+    setZoom(nextZoom);
+  }
+
+  function resetView() {
+    setZoom(1);
+    setPan({ x: 60, y: 40 });
+  }
+
+  function handleCanvasMouseDown(e) {
+    if (
+      e.target.closest('[data-workflow-node-id]') ||
+      e.target.closest('.workflow-edge-hit') ||
+      e.target.closest('.workflow-edge-delete')
+    ) {
+      return;
+    }
+
+    setSelectedEdgeId(null);
+
+    setPanState({
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startPanX: pan.x,
+      startPanY: pan.y,
+    });
+  }
+
+  function handleNodeMouseDown(e, node) {
+    e.stopPropagation();
+    setSelectedEdgeId(null);
+
+    const pos = getPos(node);
+
+    setDragNode({
+      id: node.id,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startX: pos.x,
+      startY: pos.y,
+    });
+  }
+
+  function handleHandleMouseDown(e, node) {
+    e.stopPropagation();
+
+    const rect = wrapRef.current.getBoundingClientRect();
+
+    setConnectFrom(node.id);
+
+    setPointer({
+      x: (e.clientX - rect.left - pan.x) / zoom,
+      y: (e.clientY - rect.top - pan.y) / zoom,
+    });
+  }
+
+  useEffect(() => {
+    function handleMouseMove(e) {
+      const { dragNode, connectFrom, zoom, panState } =
+        stateRef.current;
+
+      if (dragNode) {
+        const dx =
+          (e.clientX - dragNode.startClientX) / zoom;
+
+        const dy =
+          (e.clientY - dragNode.startClientY) / zoom;
+
+        setLivePositions((prev) => ({
+          ...prev,
+          [dragNode.id]: {
+            x: dragNode.startX + dx,
+            y: dragNode.startY + dy,
+          },
+        }));
+      }
+
+      if (panState) {
+        setPan({
+          x:
+            panState.startPanX +
+            (e.clientX - panState.startClientX),
+          y:
+            panState.startPanY +
+            (e.clientY - panState.startClientY),
+        });
+      }
+
+      if (connectFrom && wrapRef.current) {
+        const rect =
+          wrapRef.current.getBoundingClientRect();
+
+        const { pan, zoom } = stateRef.current;
+
+        setPointer({
+          x: (e.clientX - rect.left - pan.x) / zoom,
+          y: (e.clientY - rect.top - pan.y) / zoom,
+        });
+      }
+    }
+
+    function handleMouseUp(e) {
+      const { dragNode, connectFrom, zoom, edges } =
+        stateRef.current;
+
+      if (dragNode) {
+        const dx =
+          (e.clientX - dragNode.startClientX) / zoom;
+
+        const dy =
+          (e.clientY - dragNode.startClientY) / zoom;
+
+        onMoveNode(
+          dragNode.id,
+          dragNode.startX + dx,
+          dragNode.startY + dy
+        );
+
+        setLivePositions((prev) => {
+          const next = { ...prev };
+          delete next[dragNode.id];
+          return next;
+        });
+
+        setDragNode(null);
+      }
+
+      if (connectFrom) {
+        const targetEl = document
+          .elementFromPoint(e.clientX, e.clientY)
+          ?.closest('[data-workflow-node-id]');
+
+        const targetId = targetEl?.getAttribute(
+          'data-workflow-node-id'
+        );
+
+        if (targetId && targetId !== connectFrom) {
+          const exists = edges.some(
+            (ed) =>
+              (ed.sourceId === connectFrom &&
+                ed.targetId === targetId) ||
+              (ed.sourceId === targetId &&
+                ed.targetId === connectFrom)
+          );
+
+          if (!exists) {
+            onAddEdge(connectFrom, targetId);
+          }
+        }
+
+        setConnectFrom(null);
+        setPointer(null);
+      }
+
+      setPanState(null);
+    }
+
+    window.addEventListener(
+      'mousemove',
+      handleMouseMove
+    );
+
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener(
+        'mousemove',
+        handleMouseMove
+      );
+
+      window.removeEventListener(
+        'mouseup',
+        handleMouseUp
+      );
+    };
+    // eslint-disable-next-line
+  }, []);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+
+    function onWheelNative(e) {
+      e.preventDefault();
+
+      const { zoom, pan } = stateRef.current;
+      const rect = el.getBoundingClientRect();
+      const cursorX = e.clientX - rect.left;
+      const cursorY = e.clientY - rect.top;
+      const canvasX = (cursorX - pan.x) / zoom;
+      const canvasY = (cursorY - pan.y) / zoom;
+
+      const nextZoom = Math.min(
+        WORKFLOW_ZOOM_MAX,
+        Math.max(
+          WORKFLOW_ZOOM_MIN,
+          zoom * (1 - e.deltaY * 0.0015)
+        )
+      );
+
+      setPan({
+        x: cursorX - canvasX * nextZoom,
+        y: cursorY - canvasY * nextZoom,
+      });
+
+      setZoom(nextZoom);
+    }
+
+    el.addEventListener('wheel', onWheelNative, {
+      passive: false,
+    });
+
+    return () =>
+      el.removeEventListener('wheel', onWheelNative);
+  }, []);
+
+  return (
+    <div className="workflow-canvas-block">
+      <div className="workflow-toolbar">
+        <button
+          className="icon-btn"
+          onClick={() => zoomBy(1 / 1.2)}
+          title="Zoom arrière"
+        >
+          <ZoomOut size={14} />
+        </button>
+
+        <span className="workflow-zoom-label">
+          {Math.round(zoom * 100)}%
+        </span>
+
+        <button
+          className="icon-btn"
+          onClick={() => zoomBy(1.2)}
+          title="Zoom avant"
+        >
+          <ZoomIn size={14} />
+        </button>
+
+        <button
+          className="icon-btn"
+          onClick={resetView}
+          title="Réinitialiser la vue"
+        >
+          <Maximize size={14} />
+        </button>
+
+        <div className="workflow-toolbar-divider" />
+
+        <button
+          className="btn-secondary"
+          onClick={onAddNote}
+        >
+          <Type size={13} />
+          Texte
+        </button>
+      </div>
+
+      <div
+        className="workflow-canvas"
+        ref={wrapRef}
+        onMouseDown={handleCanvasMouseDown}
+        style={{
+          cursor: panState ? 'grabbing' : 'grab',
+        }}
+      >
+        <div
+          className="workflow-inner"
+          style={{
+            width: WORKFLOW_CANVAS_W,
+            height: WORKFLOW_CANVAS_H,
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          }}
+        >
+          <svg
+            className="workflow-edges-svg"
+            width={WORKFLOW_CANVAS_W}
+            height={WORKFLOW_CANVAS_H}
+          >
+            <defs>
+              <marker
+                id="workflow-arrow"
+                markerWidth="8"
+                markerHeight="8"
+                refX="7"
+                refY="4"
+                orient="auto"
+              >
+                <path
+                  d="M0,0 L8,4 L0,8 Z"
+                  fill="var(--pitch-dark)"
+                />
+              </marker>
+            </defs>
+
+            {edges.map((edge) => {
+              const source = nodes.find(
+                (n) => n.id === edge.sourceId
+              );
+
+              const target = nodes.find(
+                (n) => n.id === edge.targetId
+              );
+
+              if (!source || !target) return null;
+
+              const a = getBox(source);
+              const b = getBox(target);
+              const dx = b.cx - a.cx;
+              const dy = b.cy - a.cy;
+
+              const start = clipToBox(
+                a.cx,
+                a.cy,
+                a.halfW,
+                a.halfH,
+                dx,
+                dy
+              );
+
+              const end = clipToBox(
+                b.cx,
+                b.cy,
+                b.halfW,
+                b.halfH,
+                -dx,
+                -dy
+              );
+
+              const midX = (start.x + end.x) / 2;
+              const midY = (start.y + end.y) / 2;
+              const selected =
+                selectedEdgeId === edge.id;
+
+              return (
+                <g key={edge.id}>
+                  <line
+                    x1={start.x}
+                    y1={start.y}
+                    x2={end.x}
+                    y2={end.y}
+                    stroke={
+                      selected
+                        ? 'var(--red)'
+                        : 'var(--pitch-dark)'
+                    }
+                    strokeWidth={selected ? 2.5 : 2}
+                    markerEnd="url(#workflow-arrow)"
+                  />
+
+                  <line
+                    className="workflow-edge-hit"
+                    x1={start.x}
+                    y1={start.y}
+                    x2={end.x}
+                    y2={end.y}
+                    stroke="transparent"
+                    strokeWidth={16}
+                    style={{
+                      cursor: 'pointer',
+                      pointerEvents: 'stroke',
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedEdgeId(edge.id);
+                    }}
+                  />
+
+                  {selected && (
+                    <foreignObject
+                      x={midX - 12}
+                      y={midY - 12}
+                      width={24}
+                      height={24}
+                    >
+                      <button
+                        className="workflow-edge-delete"
+                        onMouseDown={(e) =>
+                          e.stopPropagation()
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteEdge(edge.id);
+                          setSelectedEdgeId(null);
+                        }}
+                      >
+                        <X size={12} />
+                      </button>
+                    </foreignObject>
+                  )}
+                </g>
+              );
+            })}
+
+            {connectFrom &&
+              pointer &&
+              (() => {
+                const source = nodes.find(
+                  (n) => n.id === connectFrom
+                );
+
+                if (!source) return null;
+
+                const a = getBox(source);
+
+                return (
+                  <line
+                    x1={a.cx}
+                    y1={a.cy}
+                    x2={pointer.x}
+                    y2={pointer.y}
+                    stroke="var(--amber)"
+                    strokeWidth={2}
+                    strokeDasharray="5,4"
+                  />
+                );
+              })()}
+          </svg>
+
+          {nodes.map((node) => {
+            const pos = getPos(node);
+
+            if (node.kind === 'task') {
+              const task = tasksById[node.taskId];
+
+              return (
+                <div
+                  key={node.id}
+                  data-workflow-node-id={node.id}
+                  className={`workflow-node workflow-node-task ${
+                    dragNode?.id === node.id
+                      ? 'is-dragging'
+                      : ''
+                  }`}
+                  ref={(el) => {
+                    nodeElRefs.current[node.id] = el;
+                  }}
+                  style={{
+                    left: pos.x,
+                    top: pos.y,
+                    borderLeftColor:
+                      task &&
+                      task.assignees &&
+                      task.assignees[0]
+                        ? getMemberColor(
+                            task.assignees[0]
+                          )
+                        : 'var(--line)',
+                  }}
+                  onMouseDown={(e) =>
+                    handleNodeMouseDown(e, node)
+                  }
+                >
+                  <button
+                    className="workflow-node-remove"
+                    title="Retirer du canvas"
+                    onMouseDown={(e) =>
+                      e.stopPropagation()
+                    }
+                    onClick={() =>
+                      onRemoveNode(node.id)
+                    }
+                  >
+                    <X size={11} />
+                  </button>
+
+                  {task ? (
+                    <>
+                      <p className="workflow-node-title">
+                        {task.title}
+                      </p>
+
+                      <div className="workflow-node-meta">
+                        <StatusPill
+                          status={task.status}
+                        />
+
+                        {task.dueDate && (
+                          <span className="workflow-node-due">
+                            {formatDateFR(
+                              task.dueDate
+                            )}
+                          </span>
+                        )}
+                      </div>
+
+                      {task.assignees &&
+                        task.assignees.length >
+                          0 && (
+                          <div className="workflow-node-assignees">
+                            {task.assignees.map(
+                              (name) => (
+                                <span
+                                  key={name}
+                                  className="workflow-node-assignee"
+                                >
+                                  <span
+                                    className="dot"
+                                    style={{
+                                      background:
+                                        getMemberColor(
+                                          name
+                                        ),
+                                    }}
+                                  />
+                                  {name}
+                                </span>
+                              )
+                            )}
+                          </div>
+                        )}
+                    </>
+                  ) : (
+                    <p
+                      className="text-xs"
+                      style={{
+                        color: 'var(--ink-light)',
+                      }}
+                    >
+                      Tâche supprimée
+                    </p>
+                  )}
+
+                  <div
+                    className="workflow-node-handle"
+                    title="Glisser pour relier à une autre bulle"
+                    onMouseDown={(e) =>
+                      handleHandleMouseDown(e, node)
+                    }
+                  />
+                </div>
+              );
+            }
+
+            return (
+              <div
+                key={node.id}
+                data-workflow-node-id={node.id}
+                className={`workflow-node workflow-node-note ${
+                  dragNode?.id === node.id
+                    ? 'is-dragging'
+                    : ''
+                }`}
+                ref={(el) => {
+                  nodeElRefs.current[node.id] = el;
+                }}
+                style={{ left: pos.x, top: pos.y }}
+                onMouseDown={(e) =>
+                  handleNodeMouseDown(e, node)
+                }
+              >
+                <button
+                  className="workflow-node-remove"
+                  title="Supprimer la note"
+                  onMouseDown={(e) =>
+                    e.stopPropagation()
+                  }
+                  onClick={() =>
+                    onRemoveNode(node.id)
+                  }
+                >
+                  <X size={11} />
+                </button>
+
+                {editingNoteId === node.id ? (
+                  <textarea
+                    autoFocus
+                    className="workflow-note-textarea"
+                    value={noteDraft}
+                    onMouseDown={(e) =>
+                      e.stopPropagation()
+                    }
+                    onChange={(e) =>
+                      setNoteDraft(e.target.value)
+                    }
+                    onBlur={() => {
+                      onUpdateNoteContent(
+                        node.id,
+                        noteDraft
+                      );
+                      setEditingNoteId(null);
+                    }}
+                  />
+                ) : (
+                  <p
+                    className="workflow-note-text"
+                    onMouseDown={(e) =>
+                      e.stopPropagation()
+                    }
+                    onClick={() => {
+                      setEditingNoteId(node.id);
+                      setNoteDraft(
+                        node.content || ''
+                      );
+                    }}
+                  >
+                    {node.content ||
+                      'Cliquez pour écrire…'}
+                  </p>
+                )}
+
+                <div
+                  className="workflow-node-handle"
+                  title="Glisser pour relier à une autre bulle"
+                  onMouseDown={(e) =>
+                    handleHandleMouseDown(e, node)
+                  }
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {nodes.length === 0 && (
+          <div className="workflow-empty-hint">
+            Cliquez sur l'icône{' '}
+            <Workflow
+              size={13}
+              style={{ verticalAlign: 'middle' }}
+            />{' '}
+            sur une tâche ci-dessous pour l'ajouter à
+            votre workflow.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
    APP
 ========================================================= */
 
@@ -4050,6 +4827,12 @@ export default function MeleeApp() {
     useState([]);
 
   const [tasks, setTasks] =
+    useState([]);
+
+  const [workflowNodes, setWorkflowNodes] =
+    useState([]);
+
+  const [workflowEdges, setWorkflowEdges] =
     useState([]);
 
   const [dataLoaded, setDataLoaded] =
@@ -4276,6 +5059,8 @@ export default function MeleeApp() {
         playersResult,
         evaluationsResult,
         transactionsResult,
+        workflowNodesResult,
+        workflowEdgesResult,
       ] = await Promise.all([
         supabase
           .from('users')
@@ -4354,6 +5139,20 @@ export default function MeleeApp() {
           .order('created_at', {
             ascending: false,
           }),
+
+        supabase
+          .from('workflow_nodes')
+          .select('*')
+          .order('created_at', {
+            ascending: true,
+          }),
+
+        supabase
+          .from('workflow_edges')
+          .select('*')
+          .order('created_at', {
+            ascending: true,
+          }),
       ]);
 
       if (usersResult.error)
@@ -4388,6 +5187,12 @@ export default function MeleeApp() {
 
       if (transactionsResult.error)
         throw transactionsResult.error;
+
+      if (workflowNodesResult.error)
+        throw workflowNodesResult.error;
+
+      if (workflowEdgesResult.error)
+        throw workflowEdgesResult.error;
 
       setUsers(
         (usersResult.data || []).map(
@@ -4546,6 +5351,34 @@ export default function MeleeApp() {
             documentId: t.document_id,
             createdBy: t.created_by || '',
             createdAt: t.created_at,
+          })
+        )
+      );
+
+      setWorkflowNodes(
+        (workflowNodesResult.data || []).map(
+          (n) => ({
+            id: n.id,
+            projectId: n.project_id,
+            taskId: n.task_id,
+            kind: n.kind,
+            content: n.content || '',
+            posX: Number(n.pos_x) || 0,
+            posY: Number(n.pos_y) || 0,
+            createdBy: n.created_by || '',
+            createdAt: n.created_at,
+          })
+        )
+      );
+
+      setWorkflowEdges(
+        (workflowEdgesResult.data || []).map(
+          (e) => ({
+            id: e.id,
+            projectId: e.project_id,
+            sourceId: e.source_id,
+            targetId: e.target_id,
+            createdAt: e.created_at,
           })
         )
       );
@@ -5274,6 +6107,267 @@ export default function MeleeApp() {
   }
 
   /* =====================================================
+     CANVAS DE WORKFLOW
+  ===================================================== */
+
+  function nextWorkflowNodePosition(projectId) {
+    const count = workflowNodes.filter(
+      (n) => n.projectId === projectId
+    ).length;
+
+    const col = count % 4;
+    const row = Math.floor(count / 4);
+
+    return {
+      x: 40 + col * 230,
+      y: 40 + row * 130,
+    };
+  }
+
+  async function toggleTaskOnCanvas(
+    projectId,
+    task
+  ) {
+    const existing = workflowNodes.find(
+      (n) =>
+        n.projectId === projectId &&
+        n.taskId === task.id
+    );
+
+    if (existing) {
+      await removeWorkflowNode(existing.id);
+      return;
+    }
+
+    try {
+      const pos = nextWorkflowNodePosition(
+        projectId
+      );
+
+      const { error } =
+        await supabase
+          .from('workflow_nodes')
+          .insert({
+            id: genId(),
+            project_id: projectId,
+            task_id: task.id,
+            kind: 'task',
+            pos_x: pos.x,
+            pos_y: pos.y,
+            created_by: session.displayName,
+          });
+
+      if (error) throw error;
+
+      await loadData();
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'ajouter la tâche au canvas."
+      );
+    }
+  }
+
+  async function addWorkflowNote(projectId) {
+    try {
+      const pos = nextWorkflowNodePosition(
+        projectId
+      );
+
+      const { error } =
+        await supabase
+          .from('workflow_nodes')
+          .insert({
+            id: genId(),
+            project_id: projectId,
+            kind: 'note',
+            content: '',
+            pos_x: pos.x,
+            pos_y: pos.y,
+            created_by: session.displayName,
+          });
+
+      if (error) throw error;
+
+      await loadData();
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'ajouter une note."
+      );
+    }
+  }
+
+  async function updateWorkflowNoteContent(
+    nodeId,
+    content
+  ) {
+    setWorkflowNodes((prev) =>
+      prev.map((n) =>
+        n.id === nodeId
+          ? { ...n, content }
+          : n
+      )
+    );
+
+    try {
+      const { error } =
+        await supabase
+          .from('workflow_nodes')
+          .update({ content })
+          .eq('id', nodeId);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'enregistrer la note."
+      );
+    }
+  }
+
+  async function moveWorkflowNode(
+    nodeId,
+    posX,
+    posY
+  ) {
+    setWorkflowNodes((prev) =>
+      prev.map((n) =>
+        n.id === nodeId
+          ? { ...n, posX, posY }
+          : n
+      )
+    );
+
+    try {
+      const { error } =
+        await supabase
+          .from('workflow_nodes')
+          .update({
+            pos_x: posX,
+            pos_y: posY,
+          })
+          .eq('id', nodeId);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'enregistrer la position."
+      );
+    }
+  }
+
+  async function removeWorkflowNode(nodeId) {
+    const previousNodes = workflowNodes;
+    const previousEdges = workflowEdges;
+
+    setWorkflowNodes((prev) =>
+      prev.filter((n) => n.id !== nodeId)
+    );
+
+    setWorkflowEdges((prev) =>
+      prev.filter(
+        (e) =>
+          e.sourceId !== nodeId &&
+          e.targetId !== nodeId
+      )
+    );
+
+    try {
+      const { error } =
+        await supabase
+          .from('workflow_nodes')
+          .delete()
+          .eq('id', nodeId);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error(error);
+
+      setWorkflowNodes(previousNodes);
+      setWorkflowEdges(previousEdges);
+
+      showToast(
+        'Impossible de retirer cet élément du canvas.'
+      );
+    }
+  }
+
+  async function addWorkflowEdge(
+    sourceId,
+    targetId
+  ) {
+    const tempEdge = {
+      id: genId(),
+      projectId: selectedProjectId,
+      sourceId,
+      targetId,
+    };
+
+    setWorkflowEdges((prev) => [
+      ...prev,
+      tempEdge,
+    ]);
+
+    try {
+      const { error } =
+        await supabase
+          .from('workflow_edges')
+          .insert({
+            id: tempEdge.id,
+            project_id: selectedProjectId,
+            source_id: sourceId,
+            target_id: targetId,
+          });
+
+      if (error) throw error;
+    } catch (error) {
+      console.error(error);
+
+      setWorkflowEdges((prev) =>
+        prev.filter(
+          (e) => e.id !== tempEdge.id
+        )
+      );
+
+      showToast(
+        "Impossible de créer la flèche."
+      );
+    }
+  }
+
+  async function deleteWorkflowEdge(edgeId) {
+    const previousEdges = workflowEdges;
+
+    setWorkflowEdges((prev) =>
+      prev.filter((e) => e.id !== edgeId)
+    );
+
+    try {
+      const { error } =
+        await supabase
+          .from('workflow_edges')
+          .delete()
+          .eq('id', edgeId);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error(error);
+
+      setWorkflowEdges(previousEdges);
+
+      showToast(
+        'Impossible de supprimer la flèche.'
+      );
+    }
+  }
+
+  /* =====================================================
      EVENEMENTS
   ===================================================== */
 
@@ -5864,6 +6958,36 @@ export default function MeleeApp() {
             selectedProject.id
         )
       : [];
+
+  const tasksById = useMemo(() => {
+    const map = {};
+    tasks.forEach((t) => {
+      map[t.id] = t;
+    });
+    return map;
+  }, [tasks]);
+
+  const projectWorkflowNodes = useMemo(
+    () =>
+      selectedProject
+        ? workflowNodes.filter(
+            (n) =>
+              n.projectId === selectedProject.id
+          )
+        : [],
+    [workflowNodes, selectedProject]
+  );
+
+  const projectWorkflowEdges = useMemo(
+    () =>
+      selectedProject
+        ? workflowEdges.filter(
+            (e) =>
+              e.projectId === selectedProject.id
+          )
+        : [],
+    [workflowEdges, selectedProject]
+  );
 
   const activeProjectsCount =
     projects.filter(
@@ -6510,6 +7634,211 @@ export default function MeleeApp() {
           border-radius:9px;
           font-size:13px;
         }
+
+        .melee-app .workflow-canvas-block {
+          margin-top:10px;
+        }
+
+        .melee-app .workflow-toolbar {
+          display:flex;
+          align-items:center;
+          gap:6px;
+          margin-bottom:8px;
+        }
+
+        .melee-app .workflow-zoom-label {
+          font-size:12px;
+          font-weight:600;
+          color:var(--ink-light);
+          min-width:38px;
+          text-align:center;
+        }
+
+        .melee-app .workflow-toolbar-divider {
+          width:1px;
+          height:22px;
+          background:var(--line);
+          margin:0 4px;
+        }
+
+        .melee-app .workflow-canvas {
+          position:relative;
+          height:440px;
+          border:1px solid var(--line);
+          border-radius:12px;
+          background:var(--chalk);
+          background-image:radial-gradient(var(--line) 1px, transparent 1px);
+          background-size:18px 18px;
+          overflow:hidden;
+          user-select:none;
+        }
+
+        .melee-app .workflow-inner {
+          position:absolute;
+          top:0;
+          left:0;
+          transform-origin:0 0;
+        }
+
+        .melee-app .workflow-edges-svg {
+          position:absolute;
+          top:0;
+          left:0;
+          pointer-events:none;
+        }
+
+        .melee-app .workflow-edges-svg .workflow-edge-hit {
+          pointer-events:stroke;
+        }
+
+        .melee-app .workflow-node {
+          position:absolute;
+          width:200px;
+          background:var(--white);
+          border-radius:10px;
+          border:1px solid var(--line);
+          box-shadow:0 2px 8px rgba(22,20,10,.08);
+          padding:10px 12px;
+          cursor:grab;
+          z-index:2;
+        }
+
+        .melee-app .workflow-node.is-dragging {
+          cursor:grabbing;
+          box-shadow:0 8px 20px rgba(22,20,10,.18);
+          z-index:5;
+        }
+
+        .melee-app .workflow-node-task {
+          border-left:4px solid var(--line);
+        }
+
+        .melee-app .workflow-node-note {
+          background:var(--amber-tint);
+          border-color:var(--amber);
+        }
+
+        .melee-app .workflow-node-remove {
+          position:absolute;
+          top:-8px;
+          right:-8px;
+          width:18px;
+          height:18px;
+          border-radius:50%;
+          border:1px solid var(--line);
+          background:var(--white);
+          color:var(--ink-light);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          cursor:pointer;
+          z-index:3;
+        }
+
+        .melee-app .workflow-node-title {
+          font-size:13px;
+          font-weight:600;
+          color:var(--ink);
+          margin-bottom:4px;
+        }
+
+        .melee-app .workflow-node-meta {
+          display:flex;
+          align-items:center;
+          gap:6px;
+          flex-wrap:wrap;
+        }
+
+        .melee-app .workflow-node-due {
+          font-size:11px;
+          color:var(--ink-light);
+        }
+
+        .melee-app .workflow-node-assignees {
+          display:flex;
+          flex-direction:column;
+          gap:2px;
+          margin-top:6px;
+        }
+
+        .melee-app .workflow-node-assignee {
+          display:flex;
+          align-items:center;
+          gap:5px;
+          font-size:11px;
+          color:var(--ink-light);
+        }
+
+        .melee-app .workflow-node-handle {
+          position:absolute;
+          top:50%;
+          right:-7px;
+          transform:translateY(-50%);
+          width:14px;
+          height:14px;
+          border-radius:50%;
+          background:var(--pitch-dark);
+          border:2px solid var(--white);
+          cursor:crosshair;
+          z-index:3;
+        }
+
+        .melee-app .workflow-note-text {
+          font-size:12px;
+          color:var(--tan-text);
+          white-space:pre-wrap;
+          min-height:20px;
+          cursor:text;
+        }
+
+        .melee-app .workflow-note-textarea {
+          width:100%;
+          min-height:60px;
+          border:none;
+          background:transparent;
+          font-family:'Work Sans',sans-serif;
+          font-size:12px;
+          color:var(--tan-text);
+          resize:vertical;
+          padding:0;
+        }
+
+        .melee-app .workflow-note-textarea:focus {
+          outline:none;
+        }
+
+        .melee-app .workflow-edge-delete {
+          pointer-events:auto;
+          width:24px;
+          height:24px;
+          border-radius:50%;
+          border:1px solid var(--red);
+          background:var(--white);
+          color:var(--red);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          cursor:pointer;
+        }
+
+        .melee-app .workflow-empty-hint {
+          position:absolute;
+          inset:0;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          text-align:center;
+          padding:0 40px;
+          font-size:13px;
+          color:var(--ink-light);
+          pointer-events:none;
+        }
+
+        .melee-app .icon-btn.active {
+          background:var(--pitch-tint);
+          color:var(--pitch-dark);
+          border-color:var(--pitch);
+        }
       `}</style>
 
       {/* HEADER */}
@@ -7000,6 +8329,39 @@ export default function MeleeApp() {
                     </div>
                   </div>
 
+                  <h2 className="font-display text-lg mt-4">
+                    Workflow
+                  </h2>
+
+                  <WorkflowCanvas
+                    nodes={projectWorkflowNodes}
+                    edges={projectWorkflowEdges}
+                    tasksById={tasksById}
+                    getMemberColor={
+                      getMemberColor
+                    }
+                    onMoveNode={
+                      moveWorkflowNode
+                    }
+                    onAddEdge={
+                      addWorkflowEdge
+                    }
+                    onDeleteEdge={
+                      deleteWorkflowEdge
+                    }
+                    onRemoveNode={
+                      removeWorkflowNode
+                    }
+                    onUpdateNoteContent={
+                      updateWorkflowNoteContent
+                    }
+                    onAddNote={() =>
+                      addWorkflowNote(
+                        selectedProject.id
+                      )
+                    }
+                  />
+
                   {selectedProject.description && (
                     <p className="text-sm mt-3">
                       {
@@ -7078,6 +8440,16 @@ export default function MeleeApp() {
                         onEdit={
                           setEditingTask
                         }
+                        onToggleCanvas={(t) =>
+                          toggleTaskOnCanvas(
+                            selectedProject.id,
+                            t
+                          )
+                        }
+                        isOnCanvas={projectWorkflowNodes.some(
+                          (n) =>
+                            n.taskId === task.id
+                        )}
                       />
                     )
                   )}
