@@ -4376,6 +4376,8 @@ function WorkflowCanvas({
     }
 
     setSelectedEdgeId(null);
+    setConnectFrom(null);
+    setPointer(null);
 
     setPanState({
       startClientX: e.clientX,
@@ -4402,6 +4404,12 @@ function WorkflowCanvas({
 
   function handleHandleMouseDown(e, node) {
     e.stopPropagation();
+
+    if (connectFrom === node.id) {
+      setConnectFrom(null);
+      setPointer(null);
+      return;
+    }
 
     const rect = wrapRef.current.getBoundingClientRect();
 
@@ -4458,9 +4466,35 @@ function WorkflowCanvas({
       }
     }
 
+    function tryCompleteConnection(
+      connectFrom,
+      targetId,
+      edges
+    ) {
+      if (!targetId || targetId === connectFrom) {
+        return false;
+      }
+
+      const exists = edges.some(
+        (ed) =>
+          (ed.sourceId === connectFrom &&
+            ed.targetId === targetId) ||
+          (ed.sourceId === targetId &&
+            ed.targetId === connectFrom)
+      );
+
+      if (!exists) {
+        onAddEdge(connectFrom, targetId);
+      }
+
+      return true;
+    }
+
     function handleMouseUp(e) {
       const { dragNode, connectFrom, zoom, edges } =
         stateRef.current;
+
+      let connectionHandled = false;
 
       if (dragNode) {
         const dx =
@@ -4469,11 +4503,28 @@ function WorkflowCanvas({
         const dy =
           (e.clientY - dragNode.startClientY) / zoom;
 
-        onMoveNode(
-          dragNode.id,
-          dragNode.startX + dx,
-          dragNode.startY + dy
+        const distance = Math.hypot(
+          e.clientX - dragNode.startClientX,
+          e.clientY - dragNode.startClientY
         );
+
+        if (
+          connectFrom &&
+          connectFrom !== dragNode.id &&
+          distance < 6
+        ) {
+          connectionHandled = tryCompleteConnection(
+            connectFrom,
+            dragNode.id,
+            edges
+          );
+        } else {
+          onMoveNode(
+            dragNode.id,
+            dragNode.startX + dx,
+            dragNode.startY + dy
+          );
+        }
 
         setLivePositions((prev) => {
           const next = { ...prev };
@@ -4484,7 +4535,7 @@ function WorkflowCanvas({
         setDragNode(null);
       }
 
-      if (connectFrom) {
+      if (connectFrom && !connectionHandled) {
         const targetEl = document
           .elementFromPoint(e.clientX, e.clientY)
           ?.closest('[data-workflow-node-id]');
@@ -4493,25 +4544,27 @@ function WorkflowCanvas({
           'data-workflow-node-id'
         );
 
-        if (targetId && targetId !== connectFrom) {
-          const exists = edges.some(
-            (ed) =>
-              (ed.sourceId === connectFrom &&
-                ed.targetId === targetId) ||
-              (ed.sourceId === targetId &&
-                ed.targetId === connectFrom)
-          );
+        connectionHandled = tryCompleteConnection(
+          connectFrom,
+          targetId,
+          edges
+        );
+      }
 
-          if (!exists) {
-            onAddEdge(connectFrom, targetId);
-          }
-        }
-
+      if (connectionHandled) {
         setConnectFrom(null);
         setPointer(null);
       }
 
       setPanState(null);
+    }
+
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') {
+        setConnectFrom(null);
+        setPointer(null);
+        setSelectedEdgeId(null);
+      }
     }
 
     window.addEventListener(
@@ -4520,6 +4573,7 @@ function WorkflowCanvas({
     );
 
     window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
       window.removeEventListener(
@@ -4530,6 +4584,11 @@ function WorkflowCanvas({
       window.removeEventListener(
         'mouseup',
         handleMouseUp
+      );
+
+      window.removeEventListener(
+        'keydown',
+        handleKeyDown
       );
     };
     // eslint-disable-next-line
@@ -4613,6 +4672,13 @@ function WorkflowCanvas({
           <Type size={13} />
           Texte
         </button>
+
+        {connectFrom && (
+          <span className="workflow-connect-hint">
+            Cliquez sur une autre bulle pour relier ·
+            Échap pour annuler
+          </span>
+        )}
       </div>
 
       <div
@@ -4792,6 +4858,10 @@ function WorkflowCanvas({
                     dragNode?.id === node.id
                       ? 'is-dragging'
                       : ''
+                  } ${
+                    connectFrom === node.id
+                      ? 'is-connect-source'
+                      : ''
                   }`}
                   ref={(el) => {
                     nodeElRefs.current[node.id] = el;
@@ -4908,6 +4978,10 @@ function WorkflowCanvas({
                 className={`workflow-node workflow-node-note ${
                   dragNode?.id === node.id
                     ? 'is-dragging'
+                    : ''
+                } ${
+                  connectFrom === node.id
+                    ? 'is-connect-source'
                     : ''
                 }`}
                 ref={(el) => {
@@ -8091,6 +8165,13 @@ export default function MeleeApp() {
           text-align:center;
         }
 
+        .melee-app .workflow-connect-hint {
+          font-size:12px;
+          font-weight:600;
+          color:var(--amber);
+          margin-left:4px;
+        }
+
         .melee-app .workflow-toolbar-divider {
           width:1px;
           height:22px;
@@ -8146,6 +8227,11 @@ export default function MeleeApp() {
         .melee-app .workflow-node.is-dragging {
           cursor:grabbing;
           box-shadow:0 8px 20px rgba(22,20,10,.18);
+          z-index:5;
+        }
+
+        .melee-app .workflow-node.is-connect-source {
+          box-shadow:0 0 0 3px var(--amber), 0 8px 20px rgba(22,20,10,.18);
           z-index:5;
         }
 
