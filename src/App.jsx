@@ -53,6 +53,8 @@ import {
   Maximize,
   Type,
   Workflow,
+  School,
+  BookOpen,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -163,7 +165,6 @@ const NAV_ITEMS = [
         id: 'cycles',
         label: 'Cycles rugby',
         icon: Dumbbell,
-        stub: true,
       },
     ],
   },
@@ -277,15 +278,6 @@ const EVAL_THEMES = [
     ],
   },
 ];
-
-const STUB_CONTENT = {
-  cycles: {
-    icon: Dumbbell,
-    title: 'Cycles rugby',
-    description:
-      "La gestion des cycles d'entraînement arrivera dans une prochaine itération.",
-  },
-};
 
 /* =========================================================
    OUTILS
@@ -2078,6 +2070,282 @@ function TaskCanvasPickerModal({
         <div className="flex justify-end mt-5">
           <button className="btn-secondary" onClick={onClose}>
             Fermer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SchoolFormModal({
+  initial,
+  onSubmit,
+  onCancel,
+}) {
+  const [name, setName] = useState(
+    initial?.name || ''
+  );
+
+  const [error, setError] = useState('');
+
+  function submit() {
+    if (!name.trim()) {
+      setError('Le nom est obligatoire.');
+      return;
+    }
+
+    onSubmit(name.trim());
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          {initial
+            ? "Renommer l'école"
+            : 'Nouvelle école'}
+        </h3>
+
+        <div className="mt-4">
+          <label>Nom de l'école</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+            placeholder="Ex. École Jean Jaurès"
+            onKeyDown={(e) =>
+              e.key === 'Enter' && submit()
+            }
+          />
+
+          {error && (
+            <p
+              className="text-xs mt-1"
+              style={{ color: 'var(--red)' }}
+            >
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            {initial ? 'Renommer' : 'Créer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SessionFormModal({
+  initial,
+  onSubmit,
+  onCancel,
+}) {
+  const [date, setDate] = useState(
+    initial?.date || todayISO()
+  );
+
+  const [time, setTime] = useState(
+    initial?.time || ''
+  );
+
+  const [error, setError] = useState('');
+
+  function submit() {
+    if (!date) {
+      setError('La date est obligatoire.');
+      return;
+    }
+
+    onSubmit({ date, time });
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          {initial
+            ? 'Modifier la séance'
+            : 'Nouvelle séance'}
+        </h3>
+
+        <div
+          className="mt-4 grid grid-cols-2 gap-3"
+        >
+          <div>
+            <label>Date</label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) =>
+                setDate(e.target.value)
+              }
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label>Heure</label>
+            <input
+              type="time"
+              value={time}
+              onChange={(e) =>
+                setTime(e.target.value)
+              }
+            />
+          </div>
+        </div>
+
+        {error && (
+          <p
+            className="text-xs mt-1"
+            style={{ color: 'var(--red)' }}
+          >
+            {error}
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            {initial ? 'Enregistrer' : 'Ajouter'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExerciseFormModal({
+  initial,
+  onSubmit,
+  onCancel,
+}) {
+  const [title, setTitle] = useState(
+    initial?.title || ''
+  );
+
+  const [content, setContent] = useState(
+    initial?.content || ''
+  );
+
+  const [error, setError] = useState('');
+
+  function submit() {
+    if (!title.trim()) {
+      setError('Le titre est obligatoire.');
+      return;
+    }
+
+    onSubmit({
+      title: title.trim(),
+      content: content.trim(),
+    });
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          {initial
+            ? "Modifier l'exercice"
+            : 'Nouvel exercice'}
+        </h3>
+
+        <div
+          className="mt-4"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+          }}
+        >
+          <div>
+            <label>Titre</label>
+            <input
+              value={title}
+              onChange={(e) =>
+                setTitle(e.target.value)
+              }
+              autoFocus
+              placeholder="Ex. Jeu à touchers"
+              onKeyDown={(e) =>
+                e.key === 'Enter' && submit()
+              }
+            />
+          </div>
+
+          <div>
+            <label>Contenu</label>
+            <textarea
+              value={content}
+              onChange={(e) =>
+                setContent(e.target.value)
+              }
+              rows={5}
+              placeholder="Consignes, organisation, matériel…"
+            />
+          </div>
+
+          {error && (
+            <p
+              className="text-xs"
+              style={{ color: 'var(--red)' }}
+            >
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            {initial ? 'Enregistrer' : 'Ajouter'}
           </button>
         </div>
       </div>
@@ -5113,6 +5381,29 @@ export default function MeleeApp() {
   const [taskCanvasPicker, setTaskCanvasPicker] =
     useState(null);
 
+  const [schools, setSchools] = useState([]);
+
+  const [schoolSessions, setSchoolSessions] =
+    useState([]);
+
+  const [schoolExercises, setSchoolExercises] =
+    useState([]);
+
+  const [selectedSchoolId, setSelectedSchoolId] =
+    useState(null);
+
+  const [selectedSessionId, setSelectedSessionId] =
+    useState(null);
+
+  const [showSchoolForm, setShowSchoolForm] =
+    useState(null);
+
+  const [showSessionForm, setShowSessionForm] =
+    useState(null);
+
+  const [showExerciseForm, setShowExerciseForm] =
+    useState(null);
+
   const [dataLoaded, setDataLoaded] =
     useState(false);
 
@@ -5340,6 +5631,9 @@ export default function MeleeApp() {
         workflowBoardsResult,
         workflowNodesResult,
         workflowEdgesResult,
+        schoolsResult,
+        schoolSessionsResult,
+        schoolExercisesResult,
       ] = await Promise.all([
         supabase
           .from('users')
@@ -5439,6 +5733,27 @@ export default function MeleeApp() {
           .order('created_at', {
             ascending: true,
           }),
+
+        supabase
+          .from('schools')
+          .select('*')
+          .order('name', {
+            ascending: true,
+          }),
+
+        supabase
+          .from('school_sessions')
+          .select('*')
+          .order('session_date', {
+            ascending: true,
+          }),
+
+        supabase
+          .from('school_exercises')
+          .select('*')
+          .order('created_at', {
+            ascending: true,
+          }),
       ]);
 
       if (usersResult.error)
@@ -5482,6 +5797,15 @@ export default function MeleeApp() {
 
       if (workflowEdgesResult.error)
         throw workflowEdgesResult.error;
+
+      if (schoolsResult.error)
+        throw schoolsResult.error;
+
+      if (schoolSessionsResult.error)
+        throw schoolSessionsResult.error;
+
+      if (schoolExercisesResult.error)
+        throw schoolExercisesResult.error;
 
       setUsers(
         (usersResult.data || []).map(
@@ -5682,6 +6006,43 @@ export default function MeleeApp() {
             boardId: e.board_id,
             sourceId: e.source_id,
             targetId: e.target_id,
+            createdAt: e.created_at,
+          })
+        )
+      );
+
+      setSchools(
+        (schoolsResult.data || []).map(
+          (s) => ({
+            id: s.id,
+            name: s.name,
+            createdBy: s.created_by || '',
+            createdAt: s.created_at,
+          })
+        )
+      );
+
+      setSchoolSessions(
+        (schoolSessionsResult.data || []).map(
+          (s) => ({
+            id: s.id,
+            schoolId: s.school_id,
+            date: s.session_date,
+            time: s.session_time || '',
+            createdBy: s.created_by || '',
+            createdAt: s.created_at,
+          })
+        )
+      );
+
+      setSchoolExercises(
+        (schoolExercisesResult.data || []).map(
+          (e) => ({
+            id: e.id,
+            sessionId: e.session_id,
+            title: e.title,
+            content: e.content || '',
+            createdBy: e.created_by || '',
             createdAt: e.created_at,
           })
         )
@@ -6767,6 +7128,199 @@ export default function MeleeApp() {
   }
 
   /* =====================================================
+     CYCLES RUGBY (ECOLES / SEANCES / EXERCICES)
+  ===================================================== */
+
+  async function saveSchool(name) {
+    try {
+      if (
+        showSchoolForm &&
+        typeof showSchoolForm === 'object'
+      ) {
+        const { error } =
+          await supabase
+            .from('schools')
+            .update({ name })
+            .eq('id', showSchoolForm.id);
+
+        if (error) throw error;
+      } else {
+        const { error } =
+          await supabase
+            .from('schools')
+            .insert({
+              id: genId(),
+              name,
+              created_by: session.displayName,
+            });
+
+        if (error) throw error;
+      }
+
+      await loadData();
+
+      setShowSchoolForm(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'enregistrer l'école."
+      );
+    }
+  }
+
+  async function deleteSchool(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('schools')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      await loadData();
+
+      setSelectedSchoolId(null);
+      setSelectedSessionId(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible de supprimer l'école."
+      );
+    }
+  }
+
+  async function saveSession(schoolId, data) {
+    try {
+      if (
+        showSessionForm &&
+        typeof showSessionForm === 'object'
+      ) {
+        const { error } =
+          await supabase
+            .from('school_sessions')
+            .update({
+              session_date: data.date,
+              session_time: data.time || null,
+            })
+            .eq('id', showSessionForm.id);
+
+        if (error) throw error;
+      } else {
+        const { error } =
+          await supabase
+            .from('school_sessions')
+            .insert({
+              id: genId(),
+              school_id: schoolId,
+              session_date: data.date,
+              session_time: data.time || null,
+              created_by: session.displayName,
+            });
+
+        if (error) throw error;
+      }
+
+      await loadData();
+
+      setShowSessionForm(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'enregistrer la séance."
+      );
+    }
+  }
+
+  async function deleteSession(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('school_sessions')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      await loadData();
+
+      setSelectedSessionId(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de supprimer la séance.'
+      );
+    }
+  }
+
+  async function saveExercise(sessionId, data) {
+    try {
+      if (
+        showExerciseForm &&
+        typeof showExerciseForm === 'object'
+      ) {
+        const { error } =
+          await supabase
+            .from('school_exercises')
+            .update({
+              title: data.title,
+              content: data.content || null,
+            })
+            .eq('id', showExerciseForm.id);
+
+        if (error) throw error;
+      } else {
+        const { error } =
+          await supabase
+            .from('school_exercises')
+            .insert({
+              id: genId(),
+              session_id: sessionId,
+              title: data.title,
+              content: data.content || null,
+              created_by: session.displayName,
+            });
+
+        if (error) throw error;
+      }
+
+      await loadData();
+
+      setShowExerciseForm(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'enregistrer l'exercice."
+      );
+    }
+  }
+
+  async function deleteExercise(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('school_exercises')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      await loadData();
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible de supprimer l'exercice."
+      );
+    }
+  }
+
+  /* =====================================================
      EVENEMENTS
   ===================================================== */
 
@@ -7319,6 +7873,8 @@ export default function MeleeApp() {
     setSelectedDay(null);
     setSelectedPlayerId(null);
     setViewingEvaluationId(null);
+    setSelectedSchoolId(null);
+    setSelectedSessionId(null);
     setOpenNavMenu(null);
   }
 
@@ -7422,6 +7978,38 @@ export default function MeleeApp() {
         : [],
     [workflowEdges, selectedBoard]
   );
+
+  const selectedSchool =
+    selectedSchoolId
+      ? schools.find(
+          (s) => s.id === selectedSchoolId
+        )
+      : null;
+
+  const selectedSchoolSessions = selectedSchool
+    ? schoolSessions
+        .filter(
+          (s) => s.schoolId === selectedSchool.id
+        )
+        .sort((a, b) =>
+          (a.date + (a.time || '')).localeCompare(
+            b.date + (b.time || '')
+          )
+        )
+    : [];
+
+  const selectedSession =
+    selectedSessionId
+      ? schoolSessions.find(
+          (s) => s.id === selectedSessionId
+        )
+      : null;
+
+  const selectedSessionExercises = selectedSession
+    ? schoolExercises.filter(
+        (e) => e.sessionId === selectedSession.id
+      )
+    : [];
 
   const activeProjectsCount =
     projects.filter(
@@ -10589,47 +11177,481 @@ export default function MeleeApp() {
               </div>
             )}
 
-            {/* PAGES EN CONSTRUCTION */}
+            {/* CYCLES RUGBY : ECOLES */}
 
-            {[
-              'cycles',
-            ].includes(activeTab) && (
-              <div
-                className="flex flex-col items-center text-center"
-                style={{
-                  padding:'64px 16px',
-                }}
-              >
-                {React.createElement(
-                  STUB_CONTENT[
-                    activeTab
-                  ].icon,
-                  { size: 40 }
-                )}
+            {activeTab === 'cycles' &&
+              !selectedSchool && (
+                <div>
+                  <div className="flex items-center justify-between">
+                    <h1 className="font-display text-2xl">
+                      Cycles rugby
+                    </h1>
 
-                <h2 className="font-display text-xl mt-3">
-                  {
-                    STUB_CONTENT[
-                      activeTab
-                    ].title
-                  }
-                </h2>
+                    <button
+                      className="btn-primary"
+                      onClick={() =>
+                        setShowSchoolForm('new')
+                      }
+                    >
+                      <Plus size={15} />
+                      Nouvelle école
+                    </button>
+                  </div>
 
-                <p
-                  className="text-sm mt-2"
-                  style={{
-                    color:
-                      'var(--ink-light)',
-                  }}
-                >
-                  {
-                    STUB_CONTENT[
-                      activeTab
-                    ].description
-                  }
-                </p>
-              </div>
-            )}
+                  <div className="pitch-divider" />
+
+                  {schools.length === 0 ? (
+                    <p
+                      className="text-sm"
+                      style={{
+                        color: 'var(--ink-light)',
+                      }}
+                    >
+                      Aucune école pour l'instant.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {schools.map((school) => {
+                        const sessionCount =
+                          schoolSessions.filter(
+                            (s) =>
+                              s.schoolId ===
+                              school.id
+                          ).length;
+
+                        return (
+                          <div
+                            key={school.id}
+                            className="card"
+                            onClick={() =>
+                              setSelectedSchoolId(
+                                school.id
+                              )
+                            }
+                          >
+                            <h3 className="font-display text-lg flex items-center gap-2">
+                              <School size={16} />
+                              {school.name}
+                            </h3>
+
+                            <p
+                              className="text-xs mt-2"
+                              style={{
+                                color:
+                                  'var(--ink-light)',
+                              }}
+                            >
+                              {sessionCount}{' '}
+                              séance
+                              {sessionCount > 1
+                                ? 's'
+                                : ''}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+            {/* CYCLES RUGBY : ECOLE */}
+
+            {activeTab === 'cycles' &&
+              selectedSchool &&
+              !selectedSession && (
+                <div>
+                  <button
+                    className="btn-secondary"
+                    onClick={() =>
+                      setSelectedSchoolId(null)
+                    }
+                  >
+                    <ChevronLeft size={14} />
+                    Écoles
+                  </button>
+
+                  <div className="flex items-start justify-between mt-4">
+                    <h1 className="font-display text-2xl flex items-center gap-2">
+                      <School size={20} />
+                      {selectedSchool.name}
+                    </h1>
+
+                    <div className="flex gap-2">
+                      <button
+                        className="icon-btn"
+                        onClick={() =>
+                          setShowSchoolForm(
+                            selectedSchool
+                          )
+                        }
+                      >
+                        <Pencil size={14} />
+                      </button>
+
+                      <button
+                        className="icon-btn"
+                        onClick={() =>
+                          setConfirmState({
+                            message: `Supprimer "${selectedSchool.name}" ? Ses séances et exercices seront perdus.`,
+                            onConfirm:
+                              async () => {
+                                await deleteSchool(
+                                  selectedSchool.id
+                                );
+
+                                setConfirmState(
+                                  null
+                                );
+                              },
+                          })
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pitch-divider" />
+
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-display text-lg">
+                      Séances
+                    </h2>
+
+                    <button
+                      className="btn-secondary"
+                      onClick={() =>
+                        setShowSessionForm('new')
+                      }
+                    >
+                      <Plus size={13} />
+                      Séance
+                    </button>
+                  </div>
+
+                  {selectedSchoolSessions.length ===
+                  0 ? (
+                    <p
+                      className="text-sm mt-2"
+                      style={{
+                        color: 'var(--ink-light)',
+                      }}
+                    >
+                      Aucune séance pour l'instant.
+                    </p>
+                  ) : (
+                    selectedSchoolSessions.map(
+                      (sess) => {
+                        const exCount =
+                          schoolExercises.filter(
+                            (e) =>
+                              e.sessionId ===
+                              sess.id
+                          ).length;
+
+                        return (
+                          <div
+                            key={sess.id}
+                            className="flex items-center gap-3 py-2"
+                            style={{
+                              borderBottom:
+                                '1px solid var(--line)',
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: 34,
+                                height: 34,
+                                borderRadius: 8,
+                                background:
+                                  'var(--pitch-tint)',
+                                display: 'flex',
+                                alignItems:
+                                  'center',
+                                justifyContent:
+                                  'center',
+                                flexShrink: 0,
+                                cursor: 'pointer',
+                              }}
+                              onClick={() =>
+                                setSelectedSessionId(
+                                  sess.id
+                                )
+                              }
+                            >
+                              <Calendar
+                                size={16}
+                                color="var(--pitch-dark)"
+                              />
+                            </div>
+
+                            <div
+                              className="flex-1 min-w-0"
+                              style={{
+                                cursor: 'pointer',
+                              }}
+                              onClick={() =>
+                                setSelectedSessionId(
+                                  sess.id
+                                )
+                              }
+                            >
+                              <p className="text-sm font-medium">
+                                {formatDateFR(
+                                  sess.date
+                                )}
+                              </p>
+
+                              <div className="flex items-center gap-2 flex-wrap mt-1">
+                                {sess.time && (
+                                  <span
+                                    className="text-xs"
+                                    style={{
+                                      color:
+                                        'var(--ink-light)',
+                                    }}
+                                  >
+                                    {sess.time}
+                                  </span>
+                                )}
+
+                                <span
+                                  className="text-xs"
+                                  style={{
+                                    color:
+                                      'var(--ink-light)',
+                                  }}
+                                >
+                                  {exCount}{' '}
+                                  exercice
+                                  {exCount > 1
+                                    ? 's'
+                                    : ''}
+                                </span>
+                              </div>
+                            </div>
+
+                            <button
+                              className="icon-btn"
+                              onClick={() =>
+                                setShowSessionForm(
+                                  sess
+                                )
+                              }
+                            >
+                              <Pencil size={14} />
+                            </button>
+
+                            <button
+                              className="icon-btn"
+                              onClick={() =>
+                                setConfirmState({
+                                  message:
+                                    'Supprimer cette séance ? Ses exercices seront perdus.',
+                                  onConfirm:
+                                    async () => {
+                                      await deleteSession(
+                                        sess.id
+                                      );
+
+                                      setConfirmState(
+                                        null
+                                      );
+                                    },
+                                })
+                              }
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        );
+                      }
+                    )
+                  )}
+                </div>
+              )}
+
+            {/* CYCLES RUGBY : SEANCE */}
+
+            {activeTab === 'cycles' &&
+              selectedSession && (
+                <div>
+                  <button
+                    className="btn-secondary"
+                    onClick={() =>
+                      setSelectedSessionId(null)
+                    }
+                  >
+                    <ChevronLeft size={14} />
+                    {selectedSchool
+                      ? selectedSchool.name
+                      : 'École'}
+                  </button>
+
+                  <div className="flex items-start justify-between mt-4">
+                    <div>
+                      <h1 className="font-display text-2xl">
+                        Séance du{' '}
+                        {formatDateFR(
+                          selectedSession.date
+                        )}
+                      </h1>
+
+                      {selectedSession.time && (
+                        <p
+                          className="text-sm mt-1"
+                          style={{
+                            color:
+                              'var(--ink-light)',
+                          }}
+                        >
+                          {selectedSession.time}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        className="icon-btn"
+                        onClick={() =>
+                          setShowSessionForm(
+                            selectedSession
+                          )
+                        }
+                      >
+                        <Pencil size={14} />
+                      </button>
+
+                      <button
+                        className="icon-btn"
+                        onClick={() =>
+                          setConfirmState({
+                            message:
+                              'Supprimer cette séance ? Ses exercices seront perdus.',
+                            onConfirm:
+                              async () => {
+                                await deleteSession(
+                                  selectedSession.id
+                                );
+
+                                setConfirmState(
+                                  null
+                                );
+                              },
+                          })
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pitch-divider" />
+
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-display text-lg">
+                      Exercices
+                    </h2>
+
+                    <button
+                      className="btn-secondary"
+                      onClick={() =>
+                        setShowExerciseForm('new')
+                      }
+                    >
+                      <Plus size={13} />
+                      Exercice
+                    </button>
+                  </div>
+
+                  {selectedSessionExercises.length ===
+                  0 ? (
+                    <p
+                      className="text-sm mt-2"
+                      style={{
+                        color: 'var(--ink-light)',
+                      }}
+                    >
+                      Aucun exercice pour l'instant.
+                    </p>
+                  ) : (
+                    <div
+                      className="flex flex-col gap-3 mt-2"
+                    >
+                      {selectedSessionExercises.map(
+                        (ex) => (
+                          <div
+                            key={ex.id}
+                            className="card"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <h3 className="font-display text-base flex items-center gap-2">
+                                <BookOpen
+                                  size={15}
+                                />
+                                {ex.title}
+                              </h3>
+
+                              <div className="flex gap-1">
+                                <button
+                                  className="icon-btn"
+                                  onClick={() =>
+                                    setShowExerciseForm(
+                                      ex
+                                    )
+                                  }
+                                >
+                                  <Pencil
+                                    size={13}
+                                  />
+                                </button>
+
+                                <button
+                                  className="icon-btn"
+                                  onClick={() =>
+                                    setConfirmState({
+                                      message: `Supprimer "${ex.title}" ?`,
+                                      onConfirm:
+                                        async () => {
+                                          await deleteExercise(
+                                            ex.id
+                                          );
+
+                                          setConfirmState(
+                                            null
+                                          );
+                                        },
+                                    })
+                                  }
+                                >
+                                  <Trash2
+                                    size={13}
+                                  />
+                                </button>
+                              </div>
+                            </div>
+
+                            {ex.content && (
+                              <p
+                                className="text-sm mt-2"
+                                style={{
+                                  whiteSpace:
+                                    'pre-wrap',
+                                  color:
+                                    'var(--ink-light)',
+                                }}
+                              >
+                                {ex.content}
+                              </p>
+                            )}
+                          </div>
+                        )
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
           </>
         )}
       </main>
@@ -11093,6 +12115,60 @@ export default function MeleeApp() {
           }
           onClose={() =>
             setTaskCanvasPicker(null)
+          }
+        />
+      )}
+
+      {/* CYCLES RUGBY : ECOLE / SEANCE / EXERCICE */}
+
+      {showSchoolForm && (
+        <SchoolFormModal
+          initial={
+            typeof showSchoolForm === 'object'
+              ? showSchoolForm
+              : null
+          }
+          onSubmit={saveSchool}
+          onCancel={() =>
+            setShowSchoolForm(null)
+          }
+        />
+      )}
+
+      {showSessionForm && (
+        <SessionFormModal
+          initial={
+            typeof showSessionForm === 'object'
+              ? showSessionForm
+              : null
+          }
+          onSubmit={(data) =>
+            saveSession(
+              selectedSchool.id,
+              data
+            )
+          }
+          onCancel={() =>
+            setShowSessionForm(null)
+          }
+        />
+      )}
+
+      {showExerciseForm && (
+        <ExerciseFormModal
+          initial={
+            typeof showExerciseForm === 'object'
+              ? showExerciseForm
+              : null
+          }
+          onSubmit={(data) =>
+            saveExercise(
+              selectedSession.id,
+              data
+            )
+          }
+          onCancel={() =>
+            setShowExerciseForm(null)
           }
         />
       )}
