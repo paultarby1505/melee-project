@@ -130,19 +130,37 @@ const STATUS_META = {
   },
 };
 
-const TABS = [
+const NAV_ITEMS = [
   { id: 'home', label: 'Accueil', icon: HomeIcon },
   { id: 'projects', label: 'Projets', icon: FolderKanban },
   { id: 'planning', label: 'Planning', icon: CalendarDays },
-  { id: 'cycles', label: 'Cycles rugby', icon: Dumbbell, stub: true },
-  { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'docs', label: 'Documents', icon: FileText },
-  {
-    id: 'evaluations',
-    label: 'Évaluations',
-    icon: ClipboardList,
-  },
   { id: 'finance', label: 'Finance', icon: Wallet },
+  {
+    id: 'edr',
+    label: 'EDR',
+    icon: ClipboardList,
+    children: [
+      {
+        id: 'evaluations',
+        label: 'Évaluations',
+        icon: ClipboardList,
+      },
+    ],
+  },
+  {
+    id: 'scolaire',
+    label: 'Scolaire',
+    icon: Dumbbell,
+    children: [
+      {
+        id: 'cycles',
+        label: 'Cycles rugby',
+        icon: Dumbbell,
+        stub: true,
+      },
+    ],
+  },
 ];
 
 const PLAYER_CATEGORIES = [
@@ -4167,6 +4185,13 @@ export default function MeleeApp() {
   const [financeProjectFilter, setFinanceProjectFilter] =
     useState('all');
 
+  const [openNavMenu, setOpenNavMenu] = useState(
+    null
+  );
+
+  const [chatDrawerOpen, setChatDrawerOpen] =
+    useState(false);
+
   /* =====================================================
      TOAST
   ===================================================== */
@@ -5747,6 +5772,7 @@ export default function MeleeApp() {
     setSelectedDay(null);
     setSelectedPlayerId(null);
     setViewingEvaluationId(null);
+    setOpenNavMenu(null);
   }
 
   function getProject(id) {
@@ -6170,6 +6196,80 @@ export default function MeleeApp() {
           border-bottom-color:var(--pitch);
         }
 
+        .melee-app .nav-dropdown {
+          position:relative;
+        }
+
+        .melee-app .nav-dropdown-menu {
+          position:absolute;
+          top:100%;
+          left:0;
+          background:var(--white);
+          border:1px solid var(--line);
+          border-radius:10px;
+          box-shadow:0 10px 24px rgba(22,20,10,.12);
+          padding:6px;
+          min-width:180px;
+          z-index:60;
+          display:flex;
+          flex-direction:column;
+          gap:2px;
+        }
+
+        .melee-app .nav-dropdown-item {
+          display:flex;
+          align-items:center;
+          gap:8px;
+          white-space:nowrap;
+          padding:9px 10px;
+          font-size:13px;
+          font-weight:600;
+          color:var(--ink);
+          cursor:pointer;
+          background:none;
+          border:none;
+          border-radius:7px;
+          text-align:left;
+        }
+
+        .melee-app .nav-dropdown-item:hover,
+        .melee-app .nav-dropdown-item.active {
+          background:var(--pitch-tint);
+          color:var(--pitch-dark);
+        }
+
+        .melee-app .chat-drawer-toggle {
+          position:fixed;
+          top:50%;
+          transform:translateY(-50%);
+          z-index:70;
+          display:flex;
+          flex-direction:column;
+          align-items:center;
+          gap:2px;
+          background:var(--pitch-dark);
+          color:var(--chalk);
+          border:none;
+          border-radius:8px 0 0 8px;
+          padding:12px 6px;
+          cursor:pointer;
+        }
+
+        .melee-app .chat-drawer {
+          position:fixed;
+          top:0;
+          bottom:0;
+          right:0;
+          width:340px;
+          max-width:88vw;
+          background:var(--white);
+          border-left:1px solid var(--line);
+          box-shadow:-8px 0 24px rgba(22,20,10,.1);
+          z-index:65;
+          display:flex;
+          flex-direction:column;
+        }
+
         .melee-app .stub-dot {
           width:5px;
           height:5px;
@@ -6428,26 +6528,95 @@ export default function MeleeApp() {
 
       {session && (
         <nav className="app-nav">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              className={`nav-tab ${
-                activeTab === tab.id
-                  ? 'active'
-                  : ''
-              }`}
-              onClick={() =>
-                goToTab(tab.id)
-              }
-            >
-              <tab.icon size={15} />
-              {tab.label}
+          {NAV_ITEMS.map((item) => {
+            if (!item.children) {
+              return (
+                <button
+                  key={item.id}
+                  className={`nav-tab ${
+                    activeTab === item.id
+                      ? 'active'
+                      : ''
+                  }`}
+                  onClick={() =>
+                    goToTab(item.id)
+                  }
+                >
+                  <item.icon size={15} />
+                  {item.label}
 
-              {tab.stub && (
-                <span className="stub-dot" />
-              )}
-            </button>
-          ))}
+                  {item.stub && (
+                    <span className="stub-dot" />
+                  )}
+                </button>
+              );
+            }
+
+            const isActiveGroup =
+              item.children.some(
+                (child) =>
+                  child.id === activeTab
+              );
+
+            return (
+              <div
+                key={item.id}
+                className="nav-dropdown"
+                onMouseEnter={() =>
+                  setOpenNavMenu(item.id)
+                }
+                onMouseLeave={() =>
+                  setOpenNavMenu(null)
+                }
+              >
+                <button
+                  className={`nav-tab ${
+                    isActiveGroup ? 'active' : ''
+                  }`}
+                  onClick={() =>
+                    setOpenNavMenu(
+                      openNavMenu === item.id
+                        ? null
+                        : item.id
+                    )
+                  }
+                >
+                  <item.icon size={15} />
+                  {item.label}
+                </button>
+
+                {openNavMenu === item.id && (
+                  <div className="nav-dropdown-menu">
+                    {item.children.map(
+                      (child) => (
+                        <button
+                          key={child.id}
+                          className={`nav-dropdown-item ${
+                            activeTab ===
+                            child.id
+                              ? 'active'
+                              : ''
+                          }`}
+                          onClick={() =>
+                            goToTab(child.id)
+                          }
+                        >
+                          <child.icon
+                            size={14}
+                          />
+                          {child.label}
+
+                          {child.stub && (
+                            <span className="stub-dot" />
+                          )}
+                        </button>
+                      )
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
           {session.role === 'admin' && (
             <button
@@ -7391,305 +7560,6 @@ export default function MeleeApp() {
 
             {/* CHAT */}
 
-            {activeTab === 'chat' && (
-              <div>
-                <h1 className="font-display text-2xl">
-                  Chat
-                </h1>
-
-                <div className="pitch-divider" />
-
-                <div
-                  className="flex gap-3"
-                  style={{
-                    alignItems: 'flex-start',
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <div
-                    className="flex flex-row lg:flex-col gap-1"
-                    style={{
-                      width: '100%',
-                      maxWidth: 220,
-                      overflowX: 'auto',
-                    }}
-                  >
-                    <button
-                      className="nav-tab"
-                      style={{
-                        justifyContent:
-                          'flex-start',
-                        borderBottom: 'none',
-                        borderRadius: 8,
-                        background:
-                          chatRoom === 'global'
-                            ? 'var(--pitch-tint)'
-                            : 'transparent',
-                        color:
-                          chatRoom === 'global'
-                            ? 'var(--pitch-dark)'
-                            : 'var(--ink-light)',
-                      }}
-                      onClick={() =>
-                        setChatRoom('global')
-                      }
-                    >
-                      <MessageSquare size={14} />
-                      Général
-                    </button>
-
-                    {users
-                      .filter(
-                        (u) =>
-                          u.username !==
-                          session.username
-                      )
-                      .map((user) => (
-                        <button
-                          key={user.username}
-                          className="nav-tab"
-                          style={{
-                            justifyContent:
-                              'flex-start',
-                            borderBottom: 'none',
-                            borderRadius: 8,
-                            background:
-                              chatRoom ===
-                              user.username
-                                ? 'var(--pitch-tint)'
-                                : 'transparent',
-                            color:
-                              chatRoom ===
-                              user.username
-                                ? 'var(--pitch-dark)'
-                                : 'var(--ink-light)',
-                          }}
-                          onClick={() =>
-                            setChatRoom(
-                              user.username
-                            )
-                          }
-                        >
-                          <span
-                            style={{
-                              width: 8,
-                              height: 8,
-                              borderRadius: '50%',
-                              background: isOnline(
-                                user
-                              )
-                                ? 'var(--pitch)'
-                                : 'var(--line)',
-                              display:
-                                'inline-block',
-                            }}
-                          />
-                          {user.displayName}
-                        </button>
-                      ))}
-                  </div>
-
-                  <div
-                    className="card"
-                    style={{
-                      flex: 1,
-                      minWidth: 260,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      height: 480,
-                      padding: 0,
-                      cursor: 'default',
-                    }}
-                  >
-                    <div
-                      className="flex items-center justify-between"
-                      style={{
-                        padding: '12px 16px',
-                        borderBottom:
-                          '1px solid var(--line)',
-                      }}
-                    >
-                      <p className="text-sm font-semibold">
-                        {chatRoom === 'global'
-                          ? 'Général'
-                          : users.find(
-                              (u) =>
-                                u.username ===
-                                chatRoom
-                            )?.displayName}
-                      </p>
-
-                      {chatRoom !== 'global' && (
-                        <p
-                          className="text-xs"
-                          style={{
-                            color: isOnline(
-                              users.find(
-                                (u) =>
-                                  u.username ===
-                                  chatRoom
-                              )
-                            )
-                              ? 'var(--pitch-dark)'
-                              : 'var(--ink-light)',
-                          }}
-                        >
-                          {isOnline(
-                            users.find(
-                              (u) =>
-                                u.username ===
-                                chatRoom
-                            )
-                          )
-                            ? 'En ligne'
-                            : 'Hors ligne'}
-                        </p>
-                      )}
-                    </div>
-
-                    <div
-                      style={{
-                        flex: 1,
-                        overflowY: 'auto',
-                        padding: 16,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 8,
-                      }}
-                    >
-                      {roomMessages.length === 0 ? (
-                        <p
-                          className="text-sm"
-                          style={{
-                            color:
-                              'var(--ink-light)',
-                          }}
-                        >
-                          Aucun message pour
-                          l'instant.
-                        </p>
-                      ) : (
-                        roomMessages.map((m) => {
-                          const mine =
-                            m.senderUsername ===
-                            session.username;
-
-                          return (
-                            <div
-                              key={m.id}
-                              style={{
-                                alignSelf: mine
-                                  ? 'flex-end'
-                                  : 'flex-start',
-                                maxWidth: '75%',
-                              }}
-                            >
-                              {chatRoom ===
-                                'global' &&
-                                !mine && (
-                                  <p
-                                    className="text-xs"
-                                    style={{
-                                      color:
-                                        getMemberColor(
-                                          m.senderDisplayName
-                                        ),
-                                    }}
-                                  >
-                                    {
-                                      m.senderDisplayName
-                                    }
-                                  </p>
-                                )}
-
-                              <div
-                                style={{
-                                  background: mine
-                                    ? 'var(--pitch-dark)'
-                                    : 'var(--chalk)',
-                                  color: mine
-                                    ? 'var(--white)'
-                                    : 'var(--ink)',
-                                  borderRadius: 10,
-                                  padding:
-                                    '8px 12px',
-                                }}
-                              >
-                                <p className="text-sm">
-                                  {m.text}
-                                </p>
-                              </div>
-
-                              <p
-                                className="text-xs mt-1"
-                                style={{
-                                  color:
-                                    'var(--ink-light)',
-                                  textAlign: mine
-                                    ? 'right'
-                                    : 'left',
-                                }}
-                              >
-                                {formatTime(
-                                  new Date(
-                                    m.createdAt
-                                  )
-                                )}
-                              </p>
-                            </div>
-                          );
-                        })
-                      )}
-
-                      <div ref={chatEndRef} />
-                    </div>
-
-                    <div
-                      className="flex gap-2"
-                      style={{
-                        padding: 12,
-                        borderTop:
-                          '1px solid var(--line)',
-                      }}
-                    >
-                      <input
-                        style={{ flex: 1 }}
-                        placeholder="Écrire un message…"
-                        value={chatDraft}
-                        onChange={(e) =>
-                          setChatDraft(
-                            e.target.value
-                          )
-                        }
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            sendMessage(
-                              activeChatChannel,
-                              chatDraft
-                            );
-                            setChatDraft('');
-                          }
-                        }}
-                      />
-
-                      <button
-                        className="btn-primary"
-                        onClick={() => {
-                          sendMessage(
-                            activeChatChannel,
-                            chatDraft
-                          );
-                          setChatDraft('');
-                        }}
-                      >
-                        <Send size={14} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
             {/* ADMINISTRATION */}
 
             {activeTab === 'admin' &&
@@ -8625,6 +8495,276 @@ export default function MeleeApp() {
           </>
         )}
       </main>
+
+      {/* CHAT (tiroir latéral) */}
+
+      {session && (
+        <>
+          <button
+            className="chat-drawer-toggle"
+            style={{
+              right: chatDrawerOpen ? 340 : 0,
+            }}
+            onClick={() =>
+              setChatDrawerOpen((v) => !v)
+            }
+          >
+            {chatDrawerOpen ? (
+              <ChevronRight size={14} />
+            ) : (
+              <ChevronLeft size={14} />
+            )}
+            <MessageSquare size={13} />
+          </button>
+
+          {chatDrawerOpen && (
+            <div className="chat-drawer">
+              <div
+                className="flex items-center justify-between"
+                style={{
+                  padding: '12px 14px',
+                  borderBottom:
+                    '1px solid var(--line)',
+                }}
+              >
+                <span
+                  className="font-display"
+                  style={{
+                    textTransform: 'uppercase',
+                    letterSpacing: '.06em',
+                    fontSize: 14,
+                  }}
+                >
+                  Chat
+                </span>
+
+                <button
+                  className="icon-btn"
+                  onClick={() =>
+                    setChatDrawerOpen(false)
+                  }
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              <div
+                className="flex gap-1"
+                style={{
+                  padding: '8px 10px',
+                  borderBottom:
+                    '1px solid var(--line)',
+                  overflowX: 'auto',
+                }}
+              >
+                <button
+                  className="nav-tab"
+                  style={{
+                    justifyContent: 'flex-start',
+                    borderBottom: 'none',
+                    borderRadius: 8,
+                    background:
+                      chatRoom === 'global'
+                        ? 'var(--pitch-tint)'
+                        : 'transparent',
+                    color:
+                      chatRoom === 'global'
+                        ? 'var(--pitch-dark)'
+                        : 'var(--ink-light)',
+                  }}
+                  onClick={() =>
+                    setChatRoom('global')
+                  }
+                >
+                  <MessageSquare size={14} />
+                  Général
+                </button>
+
+                {users
+                  .filter(
+                    (u) =>
+                      u.username !==
+                      session.username
+                  )
+                  .map((user) => (
+                    <button
+                      key={user.username}
+                      className="nav-tab"
+                      style={{
+                        justifyContent:
+                          'flex-start',
+                        borderBottom: 'none',
+                        borderRadius: 8,
+                        background:
+                          chatRoom ===
+                          user.username
+                            ? 'var(--pitch-tint)'
+                            : 'transparent',
+                        color:
+                          chatRoom ===
+                          user.username
+                            ? 'var(--pitch-dark)'
+                            : 'var(--ink-light)',
+                      }}
+                      onClick={() =>
+                        setChatRoom(
+                          user.username
+                        )
+                      }
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          background: isOnline(
+                            user
+                          )
+                            ? 'var(--pitch)'
+                            : 'var(--line)',
+                          display:
+                            'inline-block',
+                        }}
+                      />
+                      {user.displayName}
+                    </button>
+                  ))}
+              </div>
+
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  padding: 14,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                }}
+              >
+                {roomMessages.length === 0 ? (
+                  <p
+                    className="text-sm"
+                    style={{
+                      color: 'var(--ink-light)',
+                    }}
+                  >
+                    Aucun message pour l'instant.
+                  </p>
+                ) : (
+                  roomMessages.map((m) => {
+                    const mine =
+                      m.senderUsername ===
+                      session.username;
+
+                    return (
+                      <div
+                        key={m.id}
+                        style={{
+                          alignSelf: mine
+                            ? 'flex-end'
+                            : 'flex-start',
+                          maxWidth: '85%',
+                        }}
+                      >
+                        {chatRoom === 'global' &&
+                          !mine && (
+                            <p
+                              className="text-xs"
+                              style={{
+                                color:
+                                  getMemberColor(
+                                    m.senderDisplayName
+                                  ),
+                              }}
+                            >
+                              {
+                                m.senderDisplayName
+                              }
+                            </p>
+                          )}
+
+                        <div
+                          style={{
+                            background: mine
+                              ? 'var(--pitch-dark)'
+                              : 'var(--chalk)',
+                            color: mine
+                              ? 'var(--white)'
+                              : 'var(--ink)',
+                            borderRadius: 10,
+                            padding: '8px 12px',
+                          }}
+                        >
+                          <p className="text-sm">
+                            {m.text}
+                          </p>
+                        </div>
+
+                        <p
+                          className="text-xs mt-1"
+                          style={{
+                            color:
+                              'var(--ink-light)',
+                            textAlign: mine
+                              ? 'right'
+                              : 'left',
+                          }}
+                        >
+                          {formatTime(
+                            new Date(m.createdAt)
+                          )}
+                        </p>
+                      </div>
+                    );
+                  })
+                )}
+
+                <div ref={chatEndRef} />
+              </div>
+
+              <div
+                className="flex gap-2"
+                style={{
+                  padding: 10,
+                  borderTop:
+                    '1px solid var(--line)',
+                }}
+              >
+                <input
+                  style={{ flex: 1 }}
+                  placeholder="Écrire un message…"
+                  value={chatDraft}
+                  onChange={(e) =>
+                    setChatDraft(e.target.value)
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      sendMessage(
+                        activeChatChannel,
+                        chatDraft
+                      );
+                      setChatDraft('');
+                    }
+                  }}
+                />
+
+                <button
+                  className="btn-primary"
+                  onClick={() => {
+                    sendMessage(
+                      activeChatChannel,
+                      chatDraft
+                    );
+                    setChatDraft('');
+                  }}
+                >
+                  <Send size={14} />
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {/* MODAL PROJET */}
 
