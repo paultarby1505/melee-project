@@ -4615,6 +4615,8 @@ function WorkflowCanvas({
         onMouseDown={handleCanvasMouseDown}
         style={{
           cursor: panState ? 'grabbing' : 'grab',
+          backgroundPosition: `${pan.x}px ${pan.y}px, ${pan.x}px ${pan.y}px, ${pan.x}px ${pan.y}px, ${pan.x}px ${pan.y}px`,
+          backgroundSize: `${20 * zoom}px ${20 * zoom}px, ${20 * zoom}px ${20 * zoom}px, ${100 * zoom}px ${100 * zoom}px, ${100 * zoom}px ${100 * zoom}px`,
         }}
       >
         <div
@@ -8079,7 +8081,12 @@ export default function MeleeApp() {
           height:440px;
           border:1px solid var(--line);
           border-radius:12px;
-          background:#EAEAE6;
+          background-color:#B0B0B0;
+          background-image:
+            linear-gradient(to right, #9C9C9C 1px, transparent 1px),
+            linear-gradient(to bottom, #9C9C9C 1px, transparent 1px),
+            linear-gradient(to right, #868686 1px, transparent 1px),
+            linear-gradient(to bottom, #868686 1px, transparent 1px);
           overflow:hidden;
           user-select:none;
         }
@@ -8089,17 +8096,6 @@ export default function MeleeApp() {
           top:0;
           left:0;
           transform-origin:0 0;
-          background-color:#EAEAE6;
-          background-image:
-            linear-gradient(to right, #D6D6D1 1px, transparent 1px),
-            linear-gradient(to bottom, #D6D6D1 1px, transparent 1px),
-            linear-gradient(to right, #C7C7C1 1px, transparent 1px),
-            linear-gradient(to bottom, #C7C7C1 1px, transparent 1px);
-          background-size:
-            20px 20px,
-            20px 20px,
-            100px 100px,
-            100px 100px;
         }
 
         .melee-app .workflow-edges-svg {
