@@ -5399,6 +5399,17 @@ function WorkflowCanvas({
             if (node.kind === 'task') {
               const task = tasksById[node.taskId];
 
+              const isDone =
+                task &&
+                task.status === 'termine';
+
+              const isSoon =
+                task &&
+                !isDone &&
+                task.dueDate &&
+                daysBetween(task.dueDate) >= 0 &&
+                daysBetween(task.dueDate) <= 3;
+
               return (
                 <div
                   key={node.id}
@@ -5418,14 +5429,22 @@ function WorkflowCanvas({
                   style={{
                     left: pos.x,
                     top: pos.y,
-                    borderLeftColor:
-                      task &&
-                      task.assignees &&
-                      task.assignees[0]
-                        ? getMemberColor(
-                            task.assignees[0]
-                          )
-                        : 'var(--line)',
+                    background: isDone
+                      ? '#E3EEE8'
+                      : isSoon
+                      ? 'var(--amber-tint)'
+                      : 'var(--white)',
+                    borderLeftColor: isDone
+                      ? '#2D6A4F'
+                      : isSoon
+                      ? 'var(--amber)'
+                      : task &&
+                        task.assignees &&
+                        task.assignees[0]
+                      ? getMemberColor(
+                          task.assignees[0]
+                        )
+                      : 'var(--line)',
                   }}
                   onMouseDown={(e) =>
                     handleNodeMouseDown(e, node)
