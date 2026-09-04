@@ -154,6 +154,11 @@ const NAV_ITEMS = [
         label: 'Évaluations',
         icon: ClipboardList,
       },
+      {
+        id: 'seances',
+        label: 'Séance',
+        icon: Calendar,
+      },
     ],
   },
   {
@@ -2248,6 +2253,282 @@ function SessionFormModal({
 }
 
 function ExerciseFormModal({
+  initial,
+  onSubmit,
+  onCancel,
+}) {
+  const [title, setTitle] = useState(
+    initial?.title || ''
+  );
+
+  const [content, setContent] = useState(
+    initial?.content || ''
+  );
+
+  const [error, setError] = useState('');
+
+  function submit() {
+    if (!title.trim()) {
+      setError('Le titre est obligatoire.');
+      return;
+    }
+
+    onSubmit({
+      title: title.trim(),
+      content: content.trim(),
+    });
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          {initial
+            ? "Modifier l'exercice"
+            : 'Nouvel exercice'}
+        </h3>
+
+        <div
+          className="mt-4"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+          }}
+        >
+          <div>
+            <label>Titre</label>
+            <input
+              value={title}
+              onChange={(e) =>
+                setTitle(e.target.value)
+              }
+              autoFocus
+              placeholder="Ex. Jeu à touchers"
+              onKeyDown={(e) =>
+                e.key === 'Enter' && submit()
+              }
+            />
+          </div>
+
+          <div>
+            <label>Contenu</label>
+            <textarea
+              value={content}
+              onChange={(e) =>
+                setContent(e.target.value)
+              }
+              rows={5}
+              placeholder="Consignes, organisation, matériel…"
+            />
+          </div>
+
+          {error && (
+            <p
+              className="text-xs"
+              style={{ color: 'var(--red)' }}
+            >
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            {initial ? 'Enregistrer' : 'Ajouter'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CategoryFormModal({
+  initial,
+  onSubmit,
+  onCancel,
+}) {
+  const [name, setName] = useState(
+    initial?.name || ''
+  );
+
+  const [error, setError] = useState('');
+
+  function submit() {
+    if (!name.trim()) {
+      setError('Le nom est obligatoire.');
+      return;
+    }
+
+    onSubmit(name.trim());
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          {initial
+            ? 'Renommer la catégorie'
+            : 'Nouvelle catégorie'}
+        </h3>
+
+        <div className="mt-4">
+          <label>Nom de la catégorie</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+            placeholder="Ex. U10"
+            onKeyDown={(e) =>
+              e.key === 'Enter' && submit()
+            }
+          />
+
+          {error && (
+            <p
+              className="text-xs mt-1"
+              style={{ color: 'var(--red)' }}
+            >
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            {initial ? 'Renommer' : 'Créer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EdrSessionFormModal({
+  initial,
+  onSubmit,
+  onCancel,
+}) {
+  const [date, setDate] = useState(
+    initial?.date || todayISO()
+  );
+
+  const [time, setTime] = useState(
+    initial?.time || ''
+  );
+
+  const [error, setError] = useState('');
+
+  function submit() {
+    if (!date) {
+      setError('La date est obligatoire.');
+      return;
+    }
+
+    onSubmit({ date, time });
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          {initial
+            ? 'Modifier la séance'
+            : 'Nouvelle séance'}
+        </h3>
+
+        <div
+          className="mt-4 grid grid-cols-2 gap-3"
+        >
+          <div>
+            <label>Date</label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) =>
+                setDate(e.target.value)
+              }
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label>Heure</label>
+            <input
+              type="time"
+              value={time}
+              onChange={(e) =>
+                setTime(e.target.value)
+              }
+            />
+          </div>
+        </div>
+
+        {error && (
+          <p
+            className="text-xs mt-1"
+            style={{ color: 'var(--red)' }}
+          >
+            {error}
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            {initial ? 'Enregistrer' : 'Ajouter'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EdrExerciseFormModal({
   initial,
   onSubmit,
   onCancel,
@@ -5404,6 +5685,36 @@ export default function MeleeApp() {
   const [showExerciseForm, setShowExerciseForm] =
     useState(null);
 
+  const [edrCategories, setEdrCategories] =
+    useState([]);
+
+  const [edrSessions, setEdrSessions] =
+    useState([]);
+
+  const [edrExercises, setEdrExercises] =
+    useState([]);
+
+  const [selectedCategoryId, setSelectedCategoryId] =
+    useState(null);
+
+  const [
+    selectedEdrSessionId,
+    setSelectedEdrSessionId,
+  ] = useState(null);
+
+  const [showCategoryForm, setShowCategoryForm] =
+    useState(null);
+
+  const [
+    showEdrSessionForm,
+    setShowEdrSessionForm,
+  ] = useState(null);
+
+  const [
+    showEdrExerciseForm,
+    setShowEdrExerciseForm,
+  ] = useState(null);
+
   const [dataLoaded, setDataLoaded] =
     useState(false);
 
@@ -5634,6 +5945,9 @@ export default function MeleeApp() {
         schoolsResult,
         schoolSessionsResult,
         schoolExercisesResult,
+        edrCategoriesResult,
+        edrSessionsResult,
+        edrExercisesResult,
       ] = await Promise.all([
         supabase
           .from('users')
@@ -5754,6 +6068,27 @@ export default function MeleeApp() {
           .order('created_at', {
             ascending: true,
           }),
+
+        supabase
+          .from('edr_categories')
+          .select('*')
+          .order('name', {
+            ascending: true,
+          }),
+
+        supabase
+          .from('edr_sessions')
+          .select('*')
+          .order('session_date', {
+            ascending: true,
+          }),
+
+        supabase
+          .from('edr_exercises')
+          .select('*')
+          .order('created_at', {
+            ascending: true,
+          }),
       ]);
 
       if (usersResult.error)
@@ -5806,6 +6141,15 @@ export default function MeleeApp() {
 
       if (schoolExercisesResult.error)
         throw schoolExercisesResult.error;
+
+      if (edrCategoriesResult.error)
+        throw edrCategoriesResult.error;
+
+      if (edrSessionsResult.error)
+        throw edrSessionsResult.error;
+
+      if (edrExercisesResult.error)
+        throw edrExercisesResult.error;
 
       setUsers(
         (usersResult.data || []).map(
@@ -6037,6 +6381,43 @@ export default function MeleeApp() {
 
       setSchoolExercises(
         (schoolExercisesResult.data || []).map(
+          (e) => ({
+            id: e.id,
+            sessionId: e.session_id,
+            title: e.title,
+            content: e.content || '',
+            createdBy: e.created_by || '',
+            createdAt: e.created_at,
+          })
+        )
+      );
+
+      setEdrCategories(
+        (edrCategoriesResult.data || []).map(
+          (c) => ({
+            id: c.id,
+            name: c.name,
+            createdBy: c.created_by || '',
+            createdAt: c.created_at,
+          })
+        )
+      );
+
+      setEdrSessions(
+        (edrSessionsResult.data || []).map(
+          (s) => ({
+            id: s.id,
+            categoryId: s.category_id,
+            date: s.session_date,
+            time: s.session_time || '',
+            createdBy: s.created_by || '',
+            createdAt: s.created_at,
+          })
+        )
+      );
+
+      setEdrExercises(
+        (edrExercisesResult.data || []).map(
           (e) => ({
             id: e.id,
             sessionId: e.session_id,
@@ -7321,6 +7702,199 @@ export default function MeleeApp() {
   }
 
   /* =====================================================
+     EDR - SEANCES (CATEGORIES / SEANCES / EXERCICES)
+  ===================================================== */
+
+  async function saveCategory(name) {
+    try {
+      if (
+        showCategoryForm &&
+        typeof showCategoryForm === 'object'
+      ) {
+        const { error } =
+          await supabase
+            .from('edr_categories')
+            .update({ name })
+            .eq('id', showCategoryForm.id);
+
+        if (error) throw error;
+      } else {
+        const { error } =
+          await supabase
+            .from('edr_categories')
+            .insert({
+              id: genId(),
+              name,
+              created_by: session.displayName,
+            });
+
+        if (error) throw error;
+      }
+
+      await loadData();
+
+      setShowCategoryForm(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'enregistrer la catégorie."
+      );
+    }
+  }
+
+  async function deleteCategory(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('edr_categories')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      await loadData();
+
+      setSelectedCategoryId(null);
+      setSelectedEdrSessionId(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de supprimer la catégorie.'
+      );
+    }
+  }
+
+  async function saveEdrSession(categoryId, data) {
+    try {
+      if (
+        showEdrSessionForm &&
+        typeof showEdrSessionForm === 'object'
+      ) {
+        const { error } =
+          await supabase
+            .from('edr_sessions')
+            .update({
+              session_date: data.date,
+              session_time: data.time || null,
+            })
+            .eq('id', showEdrSessionForm.id);
+
+        if (error) throw error;
+      } else {
+        const { error } =
+          await supabase
+            .from('edr_sessions')
+            .insert({
+              id: genId(),
+              category_id: categoryId,
+              session_date: data.date,
+              session_time: data.time || null,
+              created_by: session.displayName,
+            });
+
+        if (error) throw error;
+      }
+
+      await loadData();
+
+      setShowEdrSessionForm(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'enregistrer la séance."
+      );
+    }
+  }
+
+  async function deleteEdrSession(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('edr_sessions')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      await loadData();
+
+      setSelectedEdrSessionId(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de supprimer la séance.'
+      );
+    }
+  }
+
+  async function saveEdrExercise(sessionId, data) {
+    try {
+      if (
+        showEdrExerciseForm &&
+        typeof showEdrExerciseForm === 'object'
+      ) {
+        const { error } =
+          await supabase
+            .from('edr_exercises')
+            .update({
+              title: data.title,
+              content: data.content || null,
+            })
+            .eq('id', showEdrExerciseForm.id);
+
+        if (error) throw error;
+      } else {
+        const { error } =
+          await supabase
+            .from('edr_exercises')
+            .insert({
+              id: genId(),
+              session_id: sessionId,
+              title: data.title,
+              content: data.content || null,
+              created_by: session.displayName,
+            });
+
+        if (error) throw error;
+      }
+
+      await loadData();
+
+      setShowEdrExerciseForm(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'enregistrer l'exercice."
+      );
+    }
+  }
+
+  async function deleteEdrExercise(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('edr_exercises')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      await loadData();
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible de supprimer l'exercice."
+      );
+    }
+  }
+
+  /* =====================================================
      EVENEMENTS
   ===================================================== */
 
@@ -7875,6 +8449,8 @@ export default function MeleeApp() {
     setViewingEvaluationId(null);
     setSelectedSchoolId(null);
     setSelectedSessionId(null);
+    setSelectedCategoryId(null);
+    setSelectedEdrSessionId(null);
     setOpenNavMenu(null);
   }
 
@@ -8010,6 +8586,41 @@ export default function MeleeApp() {
         (e) => e.sessionId === selectedSession.id
       )
     : [];
+
+  const selectedCategory =
+    selectedCategoryId
+      ? edrCategories.find(
+          (c) => c.id === selectedCategoryId
+        )
+      : null;
+
+  const selectedCategorySessions = selectedCategory
+    ? edrSessions
+        .filter(
+          (s) =>
+            s.categoryId === selectedCategory.id
+        )
+        .sort((a, b) =>
+          (a.date + (a.time || '')).localeCompare(
+            b.date + (b.time || '')
+          )
+        )
+    : [];
+
+  const selectedEdrSession =
+    selectedEdrSessionId
+      ? edrSessions.find(
+          (s) => s.id === selectedEdrSessionId
+        )
+      : null;
+
+  const selectedEdrSessionExercises =
+    selectedEdrSession
+      ? edrExercises.filter(
+          (e) =>
+            e.sessionId === selectedEdrSession.id
+        )
+      : [];
 
   const activeProjectsCount =
     projects.filter(
@@ -11652,6 +12263,491 @@ export default function MeleeApp() {
                   )}
                 </div>
               )}
+
+            {/* EDR SEANCE : CATEGORIES */}
+
+            {activeTab === 'seances' &&
+              !selectedCategory && (
+                <div>
+                  <div className="flex items-center justify-between">
+                    <h1 className="font-display text-2xl">
+                      Séance
+                    </h1>
+
+                    <button
+                      className="btn-primary"
+                      onClick={() =>
+                        setShowCategoryForm('new')
+                      }
+                    >
+                      <Plus size={15} />
+                      Nouvelle catégorie
+                    </button>
+                  </div>
+
+                  <div className="pitch-divider" />
+
+                  {edrCategories.length === 0 ? (
+                    <p
+                      className="text-sm"
+                      style={{
+                        color: 'var(--ink-light)',
+                      }}
+                    >
+                      Aucune catégorie pour
+                      l'instant.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {edrCategories.map(
+                        (category) => {
+                          const sessionCount =
+                            edrSessions.filter(
+                              (s) =>
+                                s.categoryId ===
+                                category.id
+                            ).length;
+
+                          return (
+                            <div
+                              key={category.id}
+                              className="card"
+                              onClick={() =>
+                                setSelectedCategoryId(
+                                  category.id
+                                )
+                              }
+                            >
+                              <h3 className="font-display text-lg flex items-center gap-2">
+                                <ClipboardList
+                                  size={16}
+                                />
+                                {category.name}
+                              </h3>
+
+                              <p
+                                className="text-xs mt-2"
+                                style={{
+                                  color:
+                                    'var(--ink-light)',
+                                }}
+                              >
+                                {sessionCount}{' '}
+                                séance
+                                {sessionCount > 1
+                                  ? 's'
+                                  : ''}
+                              </p>
+                            </div>
+                          );
+                        }
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+            {/* EDR SEANCE : CATEGORIE */}
+
+            {activeTab === 'seances' &&
+              selectedCategory &&
+              !selectedEdrSession && (
+                <div>
+                  <button
+                    className="btn-secondary"
+                    onClick={() =>
+                      setSelectedCategoryId(null)
+                    }
+                  >
+                    <ChevronLeft size={14} />
+                    Catégories
+                  </button>
+
+                  <div className="flex items-start justify-between mt-4">
+                    <h1 className="font-display text-2xl flex items-center gap-2">
+                      <ClipboardList size={20} />
+                      {selectedCategory.name}
+                    </h1>
+
+                    <div className="flex gap-2">
+                      <button
+                        className="icon-btn"
+                        onClick={() =>
+                          setShowCategoryForm(
+                            selectedCategory
+                          )
+                        }
+                      >
+                        <Pencil size={14} />
+                      </button>
+
+                      <button
+                        className="icon-btn"
+                        onClick={() =>
+                          setConfirmState({
+                            message: `Supprimer "${selectedCategory.name}" ? Ses séances et exercices seront perdus.`,
+                            onConfirm:
+                              async () => {
+                                await deleteCategory(
+                                  selectedCategory.id
+                                );
+
+                                setConfirmState(
+                                  null
+                                );
+                              },
+                          })
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pitch-divider" />
+
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-display text-lg">
+                      Séances
+                    </h2>
+
+                    <button
+                      className="btn-secondary"
+                      onClick={() =>
+                        setShowEdrSessionForm(
+                          'new'
+                        )
+                      }
+                    >
+                      <Plus size={13} />
+                      Séance
+                    </button>
+                  </div>
+
+                  {selectedCategorySessions.length ===
+                  0 ? (
+                    <p
+                      className="text-sm mt-2"
+                      style={{
+                        color: 'var(--ink-light)',
+                      }}
+                    >
+                      Aucune séance pour l'instant.
+                    </p>
+                  ) : (
+                    selectedCategorySessions.map(
+                      (sess) => {
+                        const exCount =
+                          edrExercises.filter(
+                            (e) =>
+                              e.sessionId ===
+                              sess.id
+                          ).length;
+
+                        return (
+                          <div
+                            key={sess.id}
+                            className="flex items-center gap-3 py-2"
+                            style={{
+                              borderBottom:
+                                '1px solid var(--line)',
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: 34,
+                                height: 34,
+                                borderRadius: 8,
+                                background:
+                                  'var(--pitch-tint)',
+                                display: 'flex',
+                                alignItems:
+                                  'center',
+                                justifyContent:
+                                  'center',
+                                flexShrink: 0,
+                                cursor: 'pointer',
+                              }}
+                              onClick={() =>
+                                setSelectedEdrSessionId(
+                                  sess.id
+                                )
+                              }
+                            >
+                              <Calendar
+                                size={16}
+                                color="var(--pitch-dark)"
+                              />
+                            </div>
+
+                            <div
+                              className="flex-1 min-w-0"
+                              style={{
+                                cursor: 'pointer',
+                              }}
+                              onClick={() =>
+                                setSelectedEdrSessionId(
+                                  sess.id
+                                )
+                              }
+                            >
+                              <p className="text-sm font-medium">
+                                {formatDateFR(
+                                  sess.date
+                                )}
+                              </p>
+
+                              <div className="flex items-center gap-2 flex-wrap mt-1">
+                                {sess.time && (
+                                  <span
+                                    className="text-xs"
+                                    style={{
+                                      color:
+                                        'var(--ink-light)',
+                                    }}
+                                  >
+                                    {sess.time}
+                                  </span>
+                                )}
+
+                                <span
+                                  className="text-xs"
+                                  style={{
+                                    color:
+                                      'var(--ink-light)',
+                                  }}
+                                >
+                                  {exCount}{' '}
+                                  exercice
+                                  {exCount > 1
+                                    ? 's'
+                                    : ''}
+                                </span>
+                              </div>
+                            </div>
+
+                            <button
+                              className="icon-btn"
+                              onClick={() =>
+                                setShowEdrSessionForm(
+                                  sess
+                                )
+                              }
+                            >
+                              <Pencil size={14} />
+                            </button>
+
+                            <button
+                              className="icon-btn"
+                              onClick={() =>
+                                setConfirmState({
+                                  message:
+                                    'Supprimer cette séance ? Ses exercices seront perdus.',
+                                  onConfirm:
+                                    async () => {
+                                      await deleteEdrSession(
+                                        sess.id
+                                      );
+
+                                      setConfirmState(
+                                        null
+                                      );
+                                    },
+                                })
+                              }
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        );
+                      }
+                    )
+                  )}
+                </div>
+              )}
+
+            {/* EDR SEANCE : SEANCE */}
+
+            {activeTab === 'seances' &&
+              selectedEdrSession && (
+                <div>
+                  <button
+                    className="btn-secondary"
+                    onClick={() =>
+                      setSelectedEdrSessionId(null)
+                    }
+                  >
+                    <ChevronLeft size={14} />
+                    {selectedCategory
+                      ? selectedCategory.name
+                      : 'Catégorie'}
+                  </button>
+
+                  <div className="flex items-start justify-between mt-4">
+                    <div>
+                      <h1 className="font-display text-2xl">
+                        Séance du{' '}
+                        {formatDateFR(
+                          selectedEdrSession.date
+                        )}
+                      </h1>
+
+                      {selectedEdrSession.time && (
+                        <p
+                          className="text-sm mt-1"
+                          style={{
+                            color:
+                              'var(--ink-light)',
+                          }}
+                        >
+                          {selectedEdrSession.time}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        className="icon-btn"
+                        onClick={() =>
+                          setShowEdrSessionForm(
+                            selectedEdrSession
+                          )
+                        }
+                      >
+                        <Pencil size={14} />
+                      </button>
+
+                      <button
+                        className="icon-btn"
+                        onClick={() =>
+                          setConfirmState({
+                            message:
+                              'Supprimer cette séance ? Ses exercices seront perdus.',
+                            onConfirm:
+                              async () => {
+                                await deleteEdrSession(
+                                  selectedEdrSession.id
+                                );
+
+                                setConfirmState(
+                                  null
+                                );
+                              },
+                          })
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pitch-divider" />
+
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-display text-lg">
+                      Exercices
+                    </h2>
+
+                    <button
+                      className="btn-secondary"
+                      onClick={() =>
+                        setShowEdrExerciseForm(
+                          'new'
+                        )
+                      }
+                    >
+                      <Plus size={13} />
+                      Exercice
+                    </button>
+                  </div>
+
+                  {selectedEdrSessionExercises.length ===
+                  0 ? (
+                    <p
+                      className="text-sm mt-2"
+                      style={{
+                        color: 'var(--ink-light)',
+                      }}
+                    >
+                      Aucun exercice pour l'instant.
+                    </p>
+                  ) : (
+                    <div
+                      className="flex flex-col gap-3 mt-2"
+                    >
+                      {selectedEdrSessionExercises.map(
+                        (ex) => (
+                          <div
+                            key={ex.id}
+                            className="card"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <h3 className="font-display text-base flex items-center gap-2">
+                                <BookOpen
+                                  size={15}
+                                />
+                                {ex.title}
+                              </h3>
+
+                              <div className="flex gap-1">
+                                <button
+                                  className="icon-btn"
+                                  onClick={() =>
+                                    setShowEdrExerciseForm(
+                                      ex
+                                    )
+                                  }
+                                >
+                                  <Pencil
+                                    size={13}
+                                  />
+                                </button>
+
+                                <button
+                                  className="icon-btn"
+                                  onClick={() =>
+                                    setConfirmState({
+                                      message: `Supprimer "${ex.title}" ?`,
+                                      onConfirm:
+                                        async () => {
+                                          await deleteEdrExercise(
+                                            ex.id
+                                          );
+
+                                          setConfirmState(
+                                            null
+                                          );
+                                        },
+                                    })
+                                  }
+                                >
+                                  <Trash2
+                                    size={13}
+                                  />
+                                </button>
+                              </div>
+                            </div>
+
+                            {ex.content && (
+                              <p
+                                className="text-sm mt-2"
+                                style={{
+                                  whiteSpace:
+                                    'pre-wrap',
+                                  color:
+                                    'var(--ink-light)',
+                                }}
+                              >
+                                {ex.content}
+                              </p>
+                            )}
+                          </div>
+                        )
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
           </>
         )}
       </main>
@@ -12169,6 +13265,61 @@ export default function MeleeApp() {
           }
           onCancel={() =>
             setShowExerciseForm(null)
+          }
+        />
+      )}
+
+      {/* EDR SEANCE : CATEGORIE / SEANCE / EXERCICE */}
+
+      {showCategoryForm && (
+        <CategoryFormModal
+          initial={
+            typeof showCategoryForm === 'object'
+              ? showCategoryForm
+              : null
+          }
+          onSubmit={saveCategory}
+          onCancel={() =>
+            setShowCategoryForm(null)
+          }
+        />
+      )}
+
+      {showEdrSessionForm && (
+        <EdrSessionFormModal
+          initial={
+            typeof showEdrSessionForm === 'object'
+              ? showEdrSessionForm
+              : null
+          }
+          onSubmit={(data) =>
+            saveEdrSession(
+              selectedCategory.id,
+              data
+            )
+          }
+          onCancel={() =>
+            setShowEdrSessionForm(null)
+          }
+        />
+      )}
+
+      {showEdrExerciseForm && (
+        <EdrExerciseFormModal
+          initial={
+            typeof showEdrExerciseForm ===
+            'object'
+              ? showEdrExerciseForm
+              : null
+          }
+          onSubmit={(data) =>
+            saveEdrExercise(
+              selectedEdrSession.id,
+              data
+            )
+          }
+          onCancel={() =>
+            setShowEdrExerciseForm(null)
           }
         />
       )}
