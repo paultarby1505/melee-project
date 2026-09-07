@@ -3641,8 +3641,10 @@ function CalendarView({
   monthDate,
   tasksByDate,
   eventsByDate,
+  schoolsByDate,
   getProjectColor,
   getMemberColor,
+  getSchoolColor,
   selectedDay,
   onSelectDay,
   onPrevMonth,
@@ -3701,6 +3703,11 @@ function CalendarView({
 
           const dayEvents =
             eventsByDate[cell.iso] || [];
+
+          const daySchoolSessions =
+            (schoolsByDate &&
+              schoolsByDate[cell.iso]) ||
+            [];
 
           const isToday =
             cell.iso === todayISO();
@@ -3763,6 +3770,29 @@ function CalendarView({
                             getMemberColor(
                               event.assignee
                             ),
+                        }}
+                      />
+                    ))}
+                </div>
+              )}
+
+              {daySchoolSessions.length > 0 && (
+                <div className="flex gap-1 flex-wrap justify-center mt-0.5">
+                  {daySchoolSessions
+                    .slice(0, 3)
+                    .map((s) => (
+                      <span
+                        key={s.id}
+                        style={{
+                          width: 5,
+                          height: 5,
+                          transform:
+                            'rotate(45deg)',
+                          background: getSchoolColor
+                            ? getSchoolColor(
+                                s.schoolId
+                              )
+                            : 'var(--tan)',
                         }}
                       />
                     ))}
@@ -3850,8 +3880,10 @@ function WeekView({
   weekAnchor,
   tasksByDate,
   eventsByDate,
+  schoolsByDate,
   getProjectColor,
   getMemberColor,
+  getSchoolColor,
   onPrevWeek,
   onNextWeek,
   onAddEventDay,
@@ -3895,6 +3927,12 @@ function WeekView({
         {days.map((day, i) => {
           const dayTasks = tasksByDate[day.iso] || [];
           const dayEvents = eventsByDate[day.iso] || [];
+
+          const daySchoolSessions =
+            (schoolsByDate &&
+              schoolsByDate[day.iso]) ||
+            [];
+
           const isToday = day.iso === todayISO();
 
           return (
@@ -4028,6 +4066,51 @@ function WeekView({
                   </div>
                 ))}
               </div>
+
+              {daySchoolSessions.length > 0 && (
+                <div
+                  className="mt-2"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                  }}
+                >
+                  {daySchoolSessions.map((s) => (
+                    <div
+                      key={s.id}
+                      style={{
+                        borderLeft: `3px solid ${
+                          getSchoolColor
+                            ? getSchoolColor(
+                                s.schoolId
+                              )
+                            : 'var(--tan)'
+                        }`,
+                        background: 'var(--tan-tint)',
+                        borderRadius: 6,
+                        padding: '4px 6px',
+                      }}
+                    >
+                      <p
+                        className="text-xs font-semibold"
+                        style={{
+                          color: 'var(--tan-text)',
+                        }}
+                      >
+                        {s.time || ''}
+                      </p>
+
+                      <p
+                        className="text-xs"
+                        style={{ color: 'var(--ink)' }}
+                      >
+                        {s.schoolName}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
@@ -5772,6 +5855,16 @@ export default function MeleeApp() {
 
   const [calendarMonth, setCalendarMonth] =
     useState(new Date());
+
+  const [
+    schoolPlanningMonth,
+    setSchoolPlanningMonth,
+  ] = useState(new Date());
+
+  const [
+    schoolPlanningSelectedDay,
+    setSchoolPlanningSelectedDay,
+  ] = useState(null);
 
   const [selectedDay, setSelectedDay] =
     useState(null);
@@ -8489,6 +8582,16 @@ export default function MeleeApp() {
       : '#999';
   }
 
+  function getSchoolColor(schoolId) {
+    const idx = schools.findIndex(
+      (s) => s.id === schoolId
+    );
+
+    return PROJECT_COLORS[
+      Math.max(0, idx) % PROJECT_COLORS.length
+    ];
+  }
+
   /* =====================================================
      DONNÉES CALCULÉES
   ===================================================== */
@@ -8775,6 +8878,39 @@ export default function MeleeApp() {
 
       return result;
     }, [eventsByDate, filterMember]);
+
+  const schoolSessionsByDate = useMemo(() => {
+    const result = {};
+
+    schoolSessions.forEach((s) => {
+      if (!s.date) return;
+
+      const school = schools.find(
+        (sc) => sc.id === s.schoolId
+      );
+
+      if (!result[s.date]) {
+        result[s.date] = [];
+      }
+
+      result[s.date].push({
+        id: s.id,
+        schoolId: s.schoolId,
+        schoolName: school
+          ? school.name
+          : 'École',
+        time: s.time,
+      });
+    });
+
+    Object.values(result).forEach((list) =>
+      list.sort((a, b) =>
+        (a.time || '').localeCompare(b.time || '')
+      )
+    );
+
+    return result;
+  }, [schoolSessions, schools]);
 
   const activeChatChannel =
     chatRoom === 'global'
@@ -10666,11 +10802,17 @@ export default function MeleeApp() {
                       eventsByDate={
                         visibleEventsByDate
                       }
+                      schoolsByDate={
+                        schoolSessionsByDate
+                      }
                       getProjectColor={
                         getProjectColor
                       }
                       getMemberColor={
                         getMemberColor
+                      }
+                      getSchoolColor={
+                        getSchoolColor
                       }
                       selectedDay={
                         selectedDay
@@ -10834,6 +10976,76 @@ export default function MeleeApp() {
                             )
                           )
                         )}
+
+                        {(schoolSessionsByDate[
+                          selectedDay
+                        ] || []).length > 0 && (
+                          <>
+                            <h3 className="font-display mt-4">
+                              Séances scolaires du{' '}
+                              {formatDateFR(
+                                selectedDay
+                              )}
+                            </h3>
+
+                            {schoolSessionsByDate[
+                              selectedDay
+                            ].map((s) => (
+                              <div
+                                key={s.id}
+                                className="flex items-center gap-3 py-2"
+                                style={{
+                                  borderBottom:
+                                    '1px solid var(--line)',
+                                  cursor: 'pointer',
+                                }}
+                                onClick={() => {
+                                  setActiveTab(
+                                    'cycles'
+                                  );
+                                  setSelectedSchoolId(
+                                    s.schoolId
+                                  );
+                                  setSelectedSessionId(
+                                    s.id
+                                  );
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    width: 8,
+                                    height: 8,
+                                    transform:
+                                      'rotate(45deg)',
+                                    background:
+                                      getSchoolColor(
+                                        s.schoolId
+                                      ),
+                                    display:
+                                      'inline-block',
+                                    flexShrink: 0,
+                                  }}
+                                />
+
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium truncate">
+                                    {s.time && (
+                                      <span
+                                        style={{
+                                          color:
+                                            'var(--ink-light)',
+                                        }}
+                                      >
+                                        {s.time}{' '}
+                                      </span>
+                                    )}
+                                    {s.schoolName}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </>
+                        )}
                       </div>
                     )}
                   </>
@@ -10842,11 +11054,17 @@ export default function MeleeApp() {
                     weekAnchor={weekAnchor}
                     tasksByDate={visibleTasksByDate}
                     eventsByDate={visibleEventsByDate}
+                    schoolsByDate={
+                      schoolSessionsByDate
+                    }
                     getProjectColor={
                       getProjectColor
                     }
                     getMemberColor={
                       getMemberColor
+                    }
+                    getSchoolColor={
+                      getSchoolColor
                     }
                     onPrevWeek={() =>
                       setWeekAnchor(
@@ -11830,9 +12048,133 @@ export default function MeleeApp() {
 
                   <div className="pitch-divider" />
 
+                  <h2 className="font-display text-lg">
+                    Planning des séances
+                  </h2>
+
+                  <CalendarView
+                    monthDate={
+                      schoolPlanningMonth
+                    }
+                    tasksByDate={{}}
+                    eventsByDate={{}}
+                    schoolsByDate={
+                      schoolSessionsByDate
+                    }
+                    getProjectColor={
+                      getProjectColor
+                    }
+                    getMemberColor={
+                      getMemberColor
+                    }
+                    getSchoolColor={
+                      getSchoolColor
+                    }
+                    selectedDay={
+                      schoolPlanningSelectedDay
+                    }
+                    onSelectDay={
+                      setSchoolPlanningSelectedDay
+                    }
+                    onPrevMonth={() =>
+                      setSchoolPlanningMonth(
+                        new Date(
+                          schoolPlanningMonth.getFullYear(),
+                          schoolPlanningMonth.getMonth() -
+                            1,
+                          1
+                        )
+                      )
+                    }
+                    onNextMonth={() =>
+                      setSchoolPlanningMonth(
+                        new Date(
+                          schoolPlanningMonth.getFullYear(),
+                          schoolPlanningMonth.getMonth() +
+                            1,
+                          1
+                        )
+                      )
+                    }
+                  />
+
+                  {schoolPlanningSelectedDay &&
+                    (schoolSessionsByDate[
+                      schoolPlanningSelectedDay
+                    ] || []).length > 0 && (
+                      <div className="mt-4">
+                        <h3 className="font-display">
+                          Séances du{' '}
+                          {formatDateFR(
+                            schoolPlanningSelectedDay
+                          )}
+                        </h3>
+
+                        {schoolSessionsByDate[
+                          schoolPlanningSelectedDay
+                        ].map((s) => (
+                          <div
+                            key={s.id}
+                            className="flex items-center gap-3 py-2"
+                            style={{
+                              borderBottom:
+                                '1px solid var(--line)',
+                              cursor: 'pointer',
+                            }}
+                            onClick={() => {
+                              setSelectedSchoolId(
+                                s.schoolId
+                              );
+                              setSelectedSessionId(
+                                s.id
+                              );
+                            }}
+                          >
+                            <span
+                              style={{
+                                width: 8,
+                                height: 8,
+                                transform:
+                                  'rotate(45deg)',
+                                background:
+                                  getSchoolColor(
+                                    s.schoolId
+                                  ),
+                                display:
+                                  'inline-block',
+                                flexShrink: 0,
+                              }}
+                            />
+
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">
+                                {s.time && (
+                                  <span
+                                    style={{
+                                      color:
+                                        'var(--ink-light)',
+                                    }}
+                                  >
+                                    {s.time}{' '}
+                                  </span>
+                                )}
+                                {s.schoolName}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                  <div className="pitch-divider" />
+
+                  <h2 className="font-display text-lg">
+                    Écoles
+                  </h2>
+
                   {schools.length === 0 ? (
                     <p
-                      className="text-sm"
+                      className="text-sm mt-2"
                       style={{
                         color: 'var(--ink-light)',
                       }}
@@ -11840,7 +12182,7 @@ export default function MeleeApp() {
                       Aucune école pour l'instant.
                     </p>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
                       {schools.map((school) => {
                         const sessionCount =
                           schoolSessions.filter(
