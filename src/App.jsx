@@ -5940,6 +5940,9 @@ export default function MeleeApp() {
   const [showClassForm, setShowClassForm] =
     useState(null);
 
+  const [selectedClassId, setSelectedClassId] =
+    useState(null);
+
   const [showSessionForm, setShowSessionForm] =
     useState(null);
 
@@ -6014,16 +6017,6 @@ export default function MeleeApp() {
 
   const [calendarMonth, setCalendarMonth] =
     useState(new Date());
-
-  const [
-    schoolPlanningMonth,
-    setSchoolPlanningMonth,
-  ] = useState(new Date());
-
-  const [
-    schoolPlanningSelectedDay,
-    setSchoolPlanningSelectedDay,
-  ] = useState(null);
 
   const [selectedDay, setSelectedDay] =
     useState(null);
@@ -6667,7 +6660,7 @@ export default function MeleeApp() {
         (schoolSessionsResult.data || []).map(
           (s) => ({
             id: s.id,
-            schoolId: s.school_id,
+            classId: s.class_id,
             date: s.session_date,
             time: s.session_time || '',
             createdBy: s.created_by || '',
@@ -7860,6 +7853,7 @@ export default function MeleeApp() {
       await loadData();
 
       setSelectedSchoolId(null);
+      setSelectedClassId(null);
       setSelectedSessionId(null);
     } catch (error) {
       console.error(error);
@@ -7928,6 +7922,9 @@ export default function MeleeApp() {
       if (error) throw error;
 
       await loadData();
+
+      setSelectedClassId(null);
+      setSelectedSessionId(null);
     } catch (error) {
       console.error(error);
 
@@ -7937,7 +7934,7 @@ export default function MeleeApp() {
     }
   }
 
-  async function saveSession(schoolId, data) {
+  async function saveSession(classId, data) {
     try {
       if (
         showSessionForm &&
@@ -7959,7 +7956,7 @@ export default function MeleeApp() {
             .from('school_sessions')
             .insert({
               id: genId(),
-              school_id: schoolId,
+              class_id: classId,
               session_date: data.date,
               session_time: data.time || null,
               created_by: session.displayName,
@@ -8812,6 +8809,7 @@ export default function MeleeApp() {
     setSelectedPlayerId(null);
     setViewingEvaluationId(null);
     setSelectedSchoolId(null);
+    setSelectedClassId(null);
     setSelectedSessionId(null);
     setSelectedCategoryId(null);
     setSelectedEdrSessionId(null);
@@ -8936,18 +8934,6 @@ export default function MeleeApp() {
         )
       : null;
 
-  const selectedSchoolSessions = selectedSchool
-    ? schoolSessions
-        .filter(
-          (s) => s.schoolId === selectedSchool.id
-        )
-        .sort((a, b) =>
-          (a.date + (a.time || '')).localeCompare(
-            b.date + (b.time || '')
-          )
-        )
-    : [];
-
   const selectedSchoolClasses = selectedSchool
     ? schoolClasses
         .filter(
@@ -8955,6 +8941,25 @@ export default function MeleeApp() {
         )
         .sort((a, b) =>
           a.name.localeCompare(b.name)
+        )
+    : [];
+
+  const selectedClass =
+    selectedClassId
+      ? schoolClasses.find(
+          (c) => c.id === selectedClassId
+        )
+      : null;
+
+  const selectedClassSessions = selectedClass
+    ? schoolSessions
+        .filter(
+          (s) => s.classId === selectedClass.id
+        )
+        .sort((a, b) =>
+          (a.date + (a.time || '')).localeCompare(
+            b.date + (b.time || '')
+          )
         )
     : [];
 
@@ -9147,9 +9152,15 @@ export default function MeleeApp() {
     schoolSessions.forEach((s) => {
       if (!s.date) return;
 
-      const school = schools.find(
-        (sc) => sc.id === s.schoolId
+      const cls = schoolClasses.find(
+        (c) => c.id === s.classId
       );
+
+      const school = cls
+        ? schools.find(
+            (sc) => sc.id === cls.schoolId
+          )
+        : null;
 
       if (!result[s.date]) {
         result[s.date] = [];
@@ -9157,7 +9168,9 @@ export default function MeleeApp() {
 
       result[s.date].push({
         id: s.id,
-        schoolId: s.schoolId,
+        classId: s.classId,
+        className: cls ? cls.name : 'Classe',
+        schoolId: cls ? cls.schoolId : null,
         schoolName: school
           ? school.name
           : 'École',
@@ -9172,7 +9185,57 @@ export default function MeleeApp() {
     );
 
     return result;
-  }, [schoolSessions, schools]);
+  }, [schoolSessions, schoolClasses, schools]);
+
+  const classPlanningRows = useMemo(() => {
+    const byClass = {};
+
+    schoolSessions.forEach((s) => {
+      if (!byClass[s.classId]) {
+        byClass[s.classId] = [];
+      }
+
+      byClass[s.classId].push(s);
+    });
+
+    return Object.keys(byClass)
+      .map((classId) => {
+        const cls = schoolClasses.find(
+          (c) => c.id === classId
+        );
+
+        if (!cls) return null;
+
+        const school = schools.find(
+          (sc) => sc.id === cls.schoolId
+        );
+
+        const sessions = byClass[classId].sort(
+          (a, b) =>
+            (
+              a.date + (a.time || '')
+            ).localeCompare(
+              b.date + (b.time || '')
+            )
+        );
+
+        return {
+          classId,
+          className: cls.name,
+          schoolId: cls.schoolId,
+          schoolName: school
+            ? school.name
+            : 'École',
+          sessions,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) =>
+        (a.sessions[0]?.date || '').localeCompare(
+          b.sessions[0]?.date || ''
+        )
+      );
+  }, [schoolSessions, schoolClasses, schools]);
 
   const activeChatChannel =
     chatRoom === 'global'
@@ -11268,6 +11331,9 @@ export default function MeleeApp() {
                                   setSelectedSchoolId(
                                     s.schoolId
                                   );
+                                  setSelectedClassId(
+                                    s.classId
+                                  );
                                   setSelectedSessionId(
                                     s.id
                                   );
@@ -12314,82 +12380,27 @@ export default function MeleeApp() {
                     Planning des séances
                   </h2>
 
-                  <CalendarView
-                    monthDate={
-                      schoolPlanningMonth
-                    }
-                    tasksByDate={{}}
-                    eventsByDate={{}}
-                    schoolsByDate={
-                      schoolSessionsByDate
-                    }
-                    getProjectColor={
-                      getProjectColor
-                    }
-                    getMemberColor={
-                      getMemberColor
-                    }
-                    getSchoolColor={
-                      getSchoolColor
-                    }
-                    selectedDay={
-                      schoolPlanningSelectedDay
-                    }
-                    onSelectDay={
-                      setSchoolPlanningSelectedDay
-                    }
-                    onPrevMonth={() =>
-                      setSchoolPlanningMonth(
-                        new Date(
-                          schoolPlanningMonth.getFullYear(),
-                          schoolPlanningMonth.getMonth() -
-                            1,
-                          1
-                        )
-                      )
-                    }
-                    onNextMonth={() =>
-                      setSchoolPlanningMonth(
-                        new Date(
-                          schoolPlanningMonth.getFullYear(),
-                          schoolPlanningMonth.getMonth() +
-                            1,
-                          1
-                        )
-                      )
-                    }
-                  />
-
-                  {schoolPlanningSelectedDay &&
-                    (schoolSessionsByDate[
-                      schoolPlanningSelectedDay
-                    ] || []).length > 0 && (
-                      <div className="mt-4">
-                        <h3 className="font-display">
-                          Séances du{' '}
-                          {formatDateFR(
-                            schoolPlanningSelectedDay
-                          )}
-                        </h3>
-
-                        {schoolSessionsByDate[
-                          schoolPlanningSelectedDay
-                        ].map((s) => (
+                  {classPlanningRows.length ===
+                  0 ? (
+                    <p
+                      className="text-sm mt-2"
+                      style={{
+                        color: 'var(--ink-light)',
+                      }}
+                    >
+                      Aucune séance programmée pour
+                      l'instant.
+                    </p>
+                  ) : (
+                    <div className="mt-2">
+                      {classPlanningRows.map(
+                        (row) => (
                           <div
-                            key={s.id}
+                            key={row.classId}
                             className="flex items-center gap-3 py-2"
                             style={{
                               borderBottom:
                                 '1px solid var(--line)',
-                              cursor: 'pointer',
-                            }}
-                            onClick={() => {
-                              setSelectedSchoolId(
-                                s.schoolId
-                              );
-                              setSelectedSessionId(
-                                s.id
-                              );
                             }}
                           >
                             <span
@@ -12400,7 +12411,7 @@ export default function MeleeApp() {
                                   'rotate(45deg)',
                                 background:
                                   getSchoolColor(
-                                    s.schoolId
+                                    row.schoolId
                                   ),
                                 display:
                                   'inline-block',
@@ -12410,23 +12421,55 @@ export default function MeleeApp() {
 
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium truncate">
-                                {s.time && (
-                                  <span
-                                    style={{
-                                      color:
-                                        'var(--ink-light)',
-                                    }}
-                                  >
-                                    {s.time}{' '}
-                                  </span>
-                                )}
-                                {s.schoolName}
+                                {row.schoolName} ·{' '}
+                                {row.className}
                               </p>
+
+                              <div className="flex items-center gap-1 flex-wrap mt-1">
+                                {row.sessions.map(
+                                  (s) => (
+                                    <button
+                                      key={s.id}
+                                      type="button"
+                                      className="pill"
+                                      style={{
+                                        background:
+                                          'var(--chalk)',
+                                        color:
+                                          'var(--ink-light)',
+                                        border:
+                                          'none',
+                                        cursor:
+                                          'pointer',
+                                      }}
+                                      onClick={() => {
+                                        setSelectedSchoolId(
+                                          row.schoolId
+                                        );
+                                        setSelectedClassId(
+                                          row.classId
+                                        );
+                                        setSelectedSessionId(
+                                          s.id
+                                        );
+                                      }}
+                                    >
+                                      {formatDateFR(
+                                        s.date
+                                      )}
+                                      {s.time
+                                        ? ` · ${s.time}`
+                                        : ''}
+                                    </button>
+                                  )
+                                )}
+                              </div>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        )
+                      )}
+                    </div>
+                  )}
 
                   <div className="pitch-divider" />
 
@@ -12446,10 +12489,10 @@ export default function MeleeApp() {
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
                       {schools.map((school) => {
-                        const sessionCount =
-                          schoolSessions.filter(
-                            (s) =>
-                              s.schoolId ===
+                        const classCount =
+                          schoolClasses.filter(
+                            (c) =>
+                              c.schoolId ===
                               school.id
                           ).length;
 
@@ -12457,11 +12500,17 @@ export default function MeleeApp() {
                           <div
                             key={school.id}
                             className="card"
-                            onClick={() =>
+                            onClick={() => {
                               setSelectedSchoolId(
                                 school.id
-                              )
-                            }
+                              );
+                              setSelectedClassId(
+                                null
+                              );
+                              setSelectedSessionId(
+                                null
+                              );
+                            }}
                           >
                             <h3 className="font-display text-lg flex items-center gap-2">
                               <School size={16} />
@@ -12475,9 +12524,9 @@ export default function MeleeApp() {
                                   'var(--ink-light)',
                               }}
                             >
-                              {sessionCount}{' '}
-                              séance
-                              {sessionCount > 1
+                              {classCount}{' '}
+                              classe
+                              {classCount > 1
                                 ? 's'
                                 : ''}
                             </p>
@@ -12493,7 +12542,7 @@ export default function MeleeApp() {
 
             {activeTab === 'cycles' &&
               selectedSchool &&
-              !selectedSession && (
+              !selectedClass && (
                 <div>
                   <button
                     className="btn-secondary"
@@ -12576,118 +12625,251 @@ export default function MeleeApp() {
                     </p>
                   ) : (
                     selectedSchoolClasses.map(
-                      (cls) => (
-                        <div
-                          key={cls.id}
-                          className="flex items-center gap-3 py-2"
-                          style={{
-                            borderBottom:
-                              '1px solid var(--line)',
-                          }}
-                        >
+                      (cls) => {
+                        const sessionCount =
+                          schoolSessions.filter(
+                            (s) =>
+                              s.classId === cls.id
+                          ).length;
+
+                        return (
                           <div
+                            key={cls.id}
+                            className="flex items-center gap-3 py-2"
                             style={{
-                              width: 34,
-                              height: 34,
-                              borderRadius: 8,
-                              background:
-                                'var(--tan-tint)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent:
-                                'center',
-                              flexShrink: 0,
+                              borderBottom:
+                                '1px solid var(--line)',
+                              cursor: 'pointer',
                             }}
-                          >
-                            <Users
-                              size={16}
-                              color="var(--tan-text)"
-                            />
-                          </div>
-
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">
-                              {cls.name}
-                            </p>
-
-                            <div className="flex items-center gap-2 flex-wrap mt-1">
-                              {cls.headcount !=
-                                null && (
-                                <span
-                                  className="text-xs"
-                                  style={{
-                                    color:
-                                      'var(--ink-light)',
-                                  }}
-                                >
-                                  {cls.headcount}{' '}
-                                  élèves
-                                </span>
-                              )}
-
-                              {cls.dayOfWeek && (
-                                <span
-                                  className="text-xs"
-                                  style={{
-                                    color:
-                                      'var(--ink-light)',
-                                  }}
-                                >
-                                  {cls.dayOfWeek
-                                    .charAt(0)
-                                    .toUpperCase() +
-                                    cls.dayOfWeek.slice(
-                                      1
-                                    )}
-                                  {cls.time
-                                    ? ` ${cls.time}`
-                                    : ''}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          <button
-                            className="icon-btn"
                             onClick={() =>
-                              setShowClassForm(
-                                cls
+                              setSelectedClassId(
+                                cls.id
                               )
                             }
                           >
-                            <Pencil size={14} />
-                          </button>
+                            <div
+                              style={{
+                                width: 34,
+                                height: 34,
+                                borderRadius: 8,
+                                background:
+                                  'var(--tan-tint)',
+                                display: 'flex',
+                                alignItems:
+                                  'center',
+                                justifyContent:
+                                  'center',
+                                flexShrink: 0,
+                              }}
+                            >
+                              <Users
+                                size={16}
+                                color="var(--tan-text)"
+                              />
+                            </div>
 
-                          <button
-                            className="icon-btn"
-                            onClick={() =>
-                              setConfirmState({
-                                message: `Supprimer la classe "${cls.name}" ?`,
-                                onConfirm:
-                                  async () => {
-                                    await deleteClass(
-                                      cls.id
-                                    );
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">
+                                {cls.name}
+                              </p>
 
-                                    setConfirmState(
-                                      null
-                                    );
-                                  },
-                              })
-                            }
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      )
+                              <div className="flex items-center gap-2 flex-wrap mt-1">
+                                {cls.headcount !=
+                                  null && (
+                                  <span
+                                    className="text-xs"
+                                    style={{
+                                      color:
+                                        'var(--ink-light)',
+                                    }}
+                                  >
+                                    {cls.headcount}{' '}
+                                    élèves
+                                  </span>
+                                )}
+
+                                {cls.dayOfWeek && (
+                                  <span
+                                    className="text-xs"
+                                    style={{
+                                      color:
+                                        'var(--ink-light)',
+                                    }}
+                                  >
+                                    {cls.dayOfWeek
+                                      .charAt(0)
+                                      .toUpperCase() +
+                                      cls.dayOfWeek.slice(
+                                        1
+                                      )}
+                                    {cls.time
+                                      ? ` ${cls.time}`
+                                      : ''}
+                                  </span>
+                                )}
+
+                                <span
+                                  className="text-xs"
+                                  style={{
+                                    color:
+                                      'var(--ink-light)',
+                                  }}
+                                >
+                                  {sessionCount}/6
+                                  séances
+                                </span>
+                              </div>
+                            </div>
+
+                            <button
+                              className="icon-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowClassForm(
+                                  cls
+                                );
+                              }}
+                            >
+                              <Pencil size={14} />
+                            </button>
+
+                            <button
+                              className="icon-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmState({
+                                  message: `Supprimer la classe "${cls.name}" ?`,
+                                  onConfirm:
+                                    async () => {
+                                      await deleteClass(
+                                        cls.id
+                                      );
+
+                                      setConfirmState(
+                                        null
+                                      );
+                                    },
+                                });
+                              }}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        );
+                      }
                     )
                   )}
+                </div>
+              )}
+
+            {/* CYCLES RUGBY : CLASSE */}
+
+            {activeTab === 'cycles' &&
+              selectedClass &&
+              !selectedSession && (
+                <div>
+                  <button
+                    className="btn-secondary"
+                    onClick={() =>
+                      setSelectedClassId(null)
+                    }
+                  >
+                    <ChevronLeft size={14} />
+                    {selectedSchool
+                      ? selectedSchool.name
+                      : 'École'}
+                  </button>
+
+                  <div className="flex items-start justify-between mt-4">
+                    <div>
+                      <h1 className="font-display text-2xl flex items-center gap-2">
+                        <Users size={20} />
+                        {selectedClass.name}
+                      </h1>
+
+                      <div className="flex items-center gap-2 flex-wrap mt-1">
+                        {selectedClass.headcount !=
+                          null && (
+                          <span
+                            className="text-sm"
+                            style={{
+                              color:
+                                'var(--ink-light)',
+                            }}
+                          >
+                            {
+                              selectedClass.headcount
+                            }{' '}
+                            élèves
+                          </span>
+                        )}
+
+                        {selectedClass.dayOfWeek && (
+                          <span
+                            className="text-sm"
+                            style={{
+                              color:
+                                'var(--ink-light)',
+                            }}
+                          >
+                            {selectedClass.dayOfWeek
+                              .charAt(0)
+                              .toUpperCase() +
+                              selectedClass.dayOfWeek.slice(
+                                1
+                              )}
+                            {selectedClass.time
+                              ? ` ${selectedClass.time}`
+                              : ''}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        className="icon-btn"
+                        onClick={() =>
+                          setShowClassForm(
+                            selectedClass
+                          )
+                        }
+                      >
+                        <Pencil size={14} />
+                      </button>
+
+                      <button
+                        className="icon-btn"
+                        onClick={() =>
+                          setConfirmState({
+                            message: `Supprimer la classe "${selectedClass.name}" ? Ses séances et exercices seront perdus.`,
+                            onConfirm:
+                              async () => {
+                                await deleteClass(
+                                  selectedClass.id
+                                );
+
+                                setConfirmState(
+                                  null
+                                );
+                              },
+                          })
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
 
                   <div className="pitch-divider" />
 
                   <div className="flex items-center justify-between">
                     <h2 className="font-display text-lg">
-                      Séances
+                      Séances (
+                      {
+                        selectedClassSessions.length
+                      }
+                      /6)
                     </h2>
 
                     <button
@@ -12701,7 +12883,7 @@ export default function MeleeApp() {
                     </button>
                   </div>
 
-                  {selectedSchoolSessions.length ===
+                  {selectedClassSessions.length ===
                   0 ? (
                     <p
                       className="text-sm mt-2"
@@ -12712,7 +12894,7 @@ export default function MeleeApp() {
                       Aucune séance pour l'instant.
                     </p>
                   ) : (
-                    selectedSchoolSessions.map(
+                    selectedClassSessions.map(
                       (sess) => {
                         const exCount =
                           schoolExercises.filter(
@@ -12855,9 +13037,9 @@ export default function MeleeApp() {
                     }
                   >
                     <ChevronLeft size={14} />
-                    {selectedSchool
-                      ? selectedSchool.name
-                      : 'École'}
+                    {selectedClass
+                      ? selectedClass.name
+                      : 'Classe'}
                   </button>
 
                   <div className="flex items-start justify-between mt-4">
@@ -14016,7 +14198,7 @@ export default function MeleeApp() {
           }
           onSubmit={(data) =>
             saveSession(
-              selectedSchool.id,
+              selectedClass.id,
               data
             )
           }
