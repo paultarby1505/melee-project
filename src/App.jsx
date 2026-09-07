@@ -12376,7 +12376,28 @@ export default function MeleeApp() {
 
                   <div className="pitch-divider" />
 
-                  <h2 className="font-display text-lg">
+                  <p
+                    className="text-sm flex items-center gap-2"
+                    style={{
+                      color: 'var(--ink-light)',
+                    }}
+                  >
+                    <Users size={14} />
+                    Effectif total :{' '}
+                    {schoolClasses.reduce(
+                      (sum, c) =>
+                        sum + (c.headcount || 0),
+                      0
+                    )}{' '}
+                    élèves ({schoolClasses.length}{' '}
+                    classe
+                    {schoolClasses.length > 1
+                      ? 's'
+                      : ''}
+                    )
+                  </p>
+
+                  <h2 className="font-display text-lg mt-3">
                     Planning des séances
                   </h2>
 
@@ -12555,10 +12576,36 @@ export default function MeleeApp() {
                   </button>
 
                   <div className="flex items-start justify-between mt-4">
-                    <h1 className="font-display text-2xl flex items-center gap-2">
-                      <School size={20} />
-                      {selectedSchool.name}
-                    </h1>
+                    <div>
+                      <h1 className="font-display text-2xl flex items-center gap-2">
+                        <School size={20} />
+                        {selectedSchool.name}
+                      </h1>
+
+                      <p
+                        className="text-sm flex items-center gap-2 mt-1"
+                        style={{
+                          color: 'var(--ink-light)',
+                        }}
+                      >
+                        <Users size={14} />
+                        {
+                          selectedSchoolClasses.length
+                        }{' '}
+                        classe
+                        {selectedSchoolClasses.length >
+                        1
+                          ? 's'
+                          : ''}{' '}
+                        ·{' '}
+                        {selectedSchoolClasses.reduce(
+                          (sum, c) =>
+                            sum + (c.headcount || 0),
+                          0
+                        )}{' '}
+                        élèves
+                      </p>
+                    </div>
 
                     <div className="flex gap-2">
                       <button
