@@ -55,6 +55,7 @@ import {
   Workflow,
   School,
   BookOpen,
+  Users,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -2151,6 +2152,158 @@ function SchoolFormModal({
 
           <button className="btn-primary" onClick={submit}>
             {initial ? 'Renommer' : 'Créer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClassFormModal({
+  initial,
+  onSubmit,
+  onCancel,
+}) {
+  const [name, setName] = useState(
+    initial?.name || ''
+  );
+
+  const [headcount, setHeadcount] = useState(
+    initial?.headcount != null
+      ? String(initial.headcount)
+      : ''
+  );
+
+  const [dayOfWeek, setDayOfWeek] = useState(
+    initial?.dayOfWeek || ''
+  );
+
+  const [time, setTime] = useState(
+    initial?.time || ''
+  );
+
+  const [error, setError] = useState('');
+
+  function submit() {
+    if (!name.trim()) {
+      setError('Le nom est obligatoire.');
+      return;
+    }
+
+    onSubmit({
+      name: name.trim(),
+      headcount: headcount
+        ? parseInt(headcount, 10)
+        : null,
+      dayOfWeek,
+      time,
+    });
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          {initial
+            ? 'Modifier la classe'
+            : 'Nouvelle classe'}
+        </h3>
+
+        <div
+          className="mt-4"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+          }}
+        >
+          <div>
+            <label>Nom de la classe</label>
+            <input
+              value={name}
+              onChange={(e) =>
+                setName(e.target.value)
+              }
+              autoFocus
+              placeholder="Ex. CE2 A"
+              onKeyDown={(e) =>
+                e.key === 'Enter' && submit()
+              }
+            />
+          </div>
+
+          <div>
+            <label>Effectif</label>
+            <input
+              type="number"
+              min="0"
+              value={headcount}
+              onChange={(e) =>
+                setHeadcount(e.target.value)
+              }
+              placeholder="Ex. 24"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label>Jour du créneau</label>
+              <select
+                value={dayOfWeek}
+                onChange={(e) =>
+                  setDayOfWeek(e.target.value)
+                }
+              >
+                <option value="">—</option>
+                {DAYS_FULL_FR.map((d) => (
+                  <option key={d} value={d}>
+                    {d.charAt(0).toUpperCase() +
+                      d.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label>Heure du créneau</label>
+              <input
+                type="time"
+                value={time}
+                onChange={(e) =>
+                  setTime(e.target.value)
+                }
+              />
+            </div>
+          </div>
+
+          {error && (
+            <p
+              className="text-xs"
+              style={{ color: 'var(--red)' }}
+            >
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            {initial ? 'Enregistrer' : 'Ajouter'}
           </button>
         </div>
       </div>
@@ -5781,6 +5934,12 @@ export default function MeleeApp() {
   const [showSchoolForm, setShowSchoolForm] =
     useState(null);
 
+  const [schoolClasses, setSchoolClasses] =
+    useState([]);
+
+  const [showClassForm, setShowClassForm] =
+    useState(null);
+
   const [showSessionForm, setShowSessionForm] =
     useState(null);
 
@@ -6055,6 +6214,7 @@ export default function MeleeApp() {
         workflowNodesResult,
         workflowEdgesResult,
         schoolsResult,
+        schoolClassesResult,
         schoolSessionsResult,
         schoolExercisesResult,
         edrCategoriesResult,
@@ -6168,6 +6328,13 @@ export default function MeleeApp() {
           }),
 
         supabase
+          .from('school_classes')
+          .select('*')
+          .order('name', {
+            ascending: true,
+          }),
+
+        supabase
           .from('school_sessions')
           .select('*')
           .order('session_date', {
@@ -6247,6 +6414,9 @@ export default function MeleeApp() {
 
       if (schoolsResult.error)
         throw schoolsResult.error;
+
+      if (schoolClassesResult.error)
+        throw schoolClassesResult.error;
 
       if (schoolSessionsResult.error)
         throw schoolSessionsResult.error;
@@ -6474,6 +6644,21 @@ export default function MeleeApp() {
             name: s.name,
             createdBy: s.created_by || '',
             createdAt: s.created_at,
+          })
+        )
+      );
+
+      setSchoolClasses(
+        (schoolClassesResult.data || []).map(
+          (c) => ({
+            id: c.id,
+            schoolId: c.school_id,
+            name: c.name,
+            headcount: c.headcount,
+            dayOfWeek: c.day_of_week || '',
+            time: c.time || '',
+            createdBy: c.created_by || '',
+            createdAt: c.created_at,
           })
         )
       );
@@ -7685,6 +7870,73 @@ export default function MeleeApp() {
     }
   }
 
+  async function saveClass(schoolId, data) {
+    try {
+      if (
+        showClassForm &&
+        typeof showClassForm === 'object'
+      ) {
+        const { error } =
+          await supabase
+            .from('school_classes')
+            .update({
+              name: data.name,
+              headcount: data.headcount,
+              day_of_week: data.dayOfWeek || null,
+              time: data.time || null,
+            })
+            .eq('id', showClassForm.id);
+
+        if (error) throw error;
+      } else {
+        const { error } =
+          await supabase
+            .from('school_classes')
+            .insert({
+              id: genId(),
+              school_id: schoolId,
+              name: data.name,
+              headcount: data.headcount,
+              day_of_week: data.dayOfWeek || null,
+              time: data.time || null,
+              created_by: session.displayName,
+            });
+
+        if (error) throw error;
+      }
+
+      await loadData();
+
+      setShowClassForm(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'enregistrer la classe."
+      );
+    }
+  }
+
+  async function deleteClass(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('school_classes')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      await loadData();
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de supprimer la classe.'
+      );
+    }
+  }
+
   async function saveSession(schoolId, data) {
     try {
       if (
@@ -8693,6 +8945,16 @@ export default function MeleeApp() {
           (a.date + (a.time || '')).localeCompare(
             b.date + (b.time || '')
           )
+        )
+    : [];
+
+  const selectedSchoolClasses = selectedSchool
+    ? schoolClasses
+        .filter(
+          (c) => c.schoolId === selectedSchool.id
+        )
+        .sort((a, b) =>
+          a.name.localeCompare(b.name)
         )
     : [];
 
@@ -12265,7 +12527,7 @@ export default function MeleeApp() {
                         className="icon-btn"
                         onClick={() =>
                           setConfirmState({
-                            message: `Supprimer "${selectedSchool.name}" ? Ses séances et exercices seront perdus.`,
+                            message: `Supprimer "${selectedSchool.name}" ? Ses classes, séances et exercices seront perdus.`,
                             onConfirm:
                               async () => {
                                 await deleteSchool(
@@ -12283,6 +12545,143 @@ export default function MeleeApp() {
                       </button>
                     </div>
                   </div>
+
+                  <div className="pitch-divider" />
+
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-display text-lg">
+                      Classes
+                    </h2>
+
+                    <button
+                      className="btn-secondary"
+                      onClick={() =>
+                        setShowClassForm('new')
+                      }
+                    >
+                      <Plus size={13} />
+                      Classe
+                    </button>
+                  </div>
+
+                  {selectedSchoolClasses.length ===
+                  0 ? (
+                    <p
+                      className="text-sm mt-2"
+                      style={{
+                        color: 'var(--ink-light)',
+                      }}
+                    >
+                      Aucune classe pour l'instant.
+                    </p>
+                  ) : (
+                    selectedSchoolClasses.map(
+                      (cls) => (
+                        <div
+                          key={cls.id}
+                          className="flex items-center gap-3 py-2"
+                          style={{
+                            borderBottom:
+                              '1px solid var(--line)',
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: 34,
+                              height: 34,
+                              borderRadius: 8,
+                              background:
+                                'var(--tan-tint)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent:
+                                'center',
+                              flexShrink: 0,
+                            }}
+                          >
+                            <Users
+                              size={16}
+                              color="var(--tan-text)"
+                            />
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">
+                              {cls.name}
+                            </p>
+
+                            <div className="flex items-center gap-2 flex-wrap mt-1">
+                              {cls.headcount !=
+                                null && (
+                                <span
+                                  className="text-xs"
+                                  style={{
+                                    color:
+                                      'var(--ink-light)',
+                                  }}
+                                >
+                                  {cls.headcount}{' '}
+                                  élèves
+                                </span>
+                              )}
+
+                              {cls.dayOfWeek && (
+                                <span
+                                  className="text-xs"
+                                  style={{
+                                    color:
+                                      'var(--ink-light)',
+                                  }}
+                                >
+                                  {cls.dayOfWeek
+                                    .charAt(0)
+                                    .toUpperCase() +
+                                    cls.dayOfWeek.slice(
+                                      1
+                                    )}
+                                  {cls.time
+                                    ? ` ${cls.time}`
+                                    : ''}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <button
+                            className="icon-btn"
+                            onClick={() =>
+                              setShowClassForm(
+                                cls
+                              )
+                            }
+                          >
+                            <Pencil size={14} />
+                          </button>
+
+                          <button
+                            className="icon-btn"
+                            onClick={() =>
+                              setConfirmState({
+                                message: `Supprimer la classe "${cls.name}" ?`,
+                                onConfirm:
+                                  async () => {
+                                    await deleteClass(
+                                      cls.id
+                                    );
+
+                                    setConfirmState(
+                                      null
+                                    );
+                                  },
+                              })
+                            }
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      )
+                    )
+                  )}
 
                   <div className="pitch-divider" />
 
@@ -13588,6 +13987,22 @@ export default function MeleeApp() {
           onSubmit={saveSchool}
           onCancel={() =>
             setShowSchoolForm(null)
+          }
+        />
+      )}
+
+      {showClassForm && (
+        <ClassFormModal
+          initial={
+            typeof showClassForm === 'object'
+              ? showClassForm
+              : null
+          }
+          onSubmit={(data) =>
+            saveClass(selectedSchool.id, data)
+          }
+          onCancel={() =>
+            setShowClassForm(null)
           }
         />
       )}
