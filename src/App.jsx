@@ -503,6 +503,25 @@ function getMondayOfISOWeek(week, year) {
   );
 }
 
+function formatWeekRangeFR(monday) {
+  const sunday = new Date(
+    monday.getFullYear(),
+    monday.getMonth(),
+    monday.getDate() + 6
+  );
+
+  const isoOf = (d) =>
+    `${d.getFullYear()}-${String(
+      d.getMonth() + 1
+    ).padStart(2, '0')}-${String(
+      d.getDate()
+    ).padStart(2, '0')}`;
+
+  return `${formatDateFR(
+    isoOf(monday)
+  )} – ${formatDateFR(isoOf(sunday))}`;
+}
+
 function parseTimeToMinutes(t) {
   if (!t) return null;
 
@@ -4828,19 +4847,22 @@ function DonutChart({ totalIn, totalOut, size = 160 }) {
 
 function PlanningWeekFormModal({
   users,
+  lockedWeek,
   onSubmit,
   onCancel,
 }) {
   const [userDisplayName, setUserDisplayName] =
     useState(users[0]?.displayName || '');
 
-  const [date, setDate] = useState(todayISO());
+  const [date, setDate] = useState(
+    lockedWeek ? lockedWeek.dateIso : todayISO()
+  );
 
   const [error, setError] = useState('');
 
-  const { week, year } = getISOWeekYear(
-    new Date(date)
-  );
+  const { week, year } = lockedWeek
+    ? { week: lockedWeek.week, year: lockedWeek.year }
+    : getISOWeekYear(new Date(date));
 
   function submit() {
     if (!userDisplayName) {
@@ -4871,7 +4893,13 @@ function PlanningWeekFormModal({
         </button>
 
         <h3 className="font-display text-lg">
-          Nouvelle semaine
+          {lockedWeek
+            ? `Ajouter un utilisateur — Semaine ${String(
+                lockedWeek.week
+              ).padStart(2, '0')} de ${
+                lockedWeek.year
+              }`
+            : 'Nouvelle semaine'}
         </h3>
 
         <div
@@ -4889,6 +4917,7 @@ function PlanningWeekFormModal({
               onChange={(e) =>
                 setUserDisplayName(e.target.value)
               }
+              autoFocus={!!lockedWeek}
             >
               {users.map((u) => (
                 <option
@@ -4901,17 +4930,19 @@ function PlanningWeekFormModal({
             </select>
           </div>
 
-          <div>
-            <label>Une date de la semaine concernée</label>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) =>
-                setDate(e.target.value)
-              }
-              autoFocus
-            />
-          </div>
+          {!lockedWeek && (
+            <div>
+              <label>Une date de la semaine concernée</label>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) =>
+                  setDate(e.target.value)
+                }
+                autoFocus
+              />
+            </div>
+          )}
 
           <p
             className="text-sm"
@@ -6337,6 +6368,11 @@ export default function MeleeApp() {
   const [
     selectedPlanningWeekId,
     setSelectedPlanningWeekId,
+  ] = useState(null);
+
+  const [
+    selectedPlanningWeekGroupKey,
+    setSelectedPlanningWeekGroupKey,
   ] = useState(null);
 
   const [
@@ -9636,6 +9672,7 @@ export default function MeleeApp() {
     setSelectedCategoryId(null);
     setSelectedEdrSessionId(null);
     setSelectedPlanningWeekId(null);
+    setSelectedPlanningWeekGroupKey(null);
     setOpenNavMenu(null);
   }
 
@@ -9843,6 +9880,39 @@ export default function MeleeApp() {
       }),
     [planningWeeks]
   );
+
+  const planningWeekGroups = useMemo(() => {
+    const map = new Map();
+
+    sortedPlanningWeeks.forEach((w) => {
+      const key = `${w.year}-${w.weekNumber}`;
+
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          year: w.year,
+          weekNumber: w.weekNumber,
+          monday: getMondayOfISOWeek(
+            w.weekNumber,
+            w.year
+          ),
+          weeks: [],
+        });
+      }
+
+      map.get(key).weeks.push(w);
+    });
+
+    return Array.from(map.values());
+  }, [sortedPlanningWeeks]);
+
+  const selectedPlanningWeekGroup =
+    selectedPlanningWeekGroupKey
+      ? planningWeekGroups.find(
+          (g) =>
+            g.key === selectedPlanningWeekGroupKey
+        ) || null
+      : null;
 
   const selectedPlanningWeek =
     selectedPlanningWeekId
@@ -12504,7 +12574,7 @@ export default function MeleeApp() {
             {/* GESTION PLANNING */}
 
             {activeTab === 'gestion-planning' &&
-              !selectedPlanningWeek && (
+              !selectedPlanningWeekGroup && (
                 <div>
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <h1 className="font-display text-2xl">
@@ -12524,7 +12594,7 @@ export default function MeleeApp() {
 
                   <div className="pitch-divider" />
 
-                  {sortedPlanningWeeks.length ===
+                  {planningWeekGroups.length ===
                   0 ? (
                     <p
                       className="text-sm mt-2"
@@ -12537,123 +12607,84 @@ export default function MeleeApp() {
                     </p>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
-                      {sortedPlanningWeeks.map(
-                        (week) => {
-                          const weekEntries =
-                            planningEntries.filter(
-                              (e) =>
-                                e.weekId === week.id
-                            );
-
-                          const totalMinutes =
-                            weekEntries.reduce(
-                              (sum, e) =>
-                                sum +
-                                entryDurationMinutes(
-                                  e
-                                ),
-                              0
-                            );
+                      {planningWeekGroups.map(
+                        (group) => {
+                          const validatedCount =
+                            group.weeks.filter(
+                              (w) =>
+                                w.status === 'valide'
+                            ).length;
 
                           return (
                             <div
-                              key={week.id}
+                              key={group.key}
                               className="card"
                               onClick={() =>
-                                setSelectedPlanningWeekId(
-                                  week.id
+                                setSelectedPlanningWeekGroupKey(
+                                  group.key
                                 )
                               }
                             >
-                              <div className="flex items-center justify-between gap-2">
-                                <h3 className="font-display text-lg flex items-center gap-2">
-                                  <UserCog size={16} />
-                                  Semaine{' '}
-                                  {String(
-                                    week.weekNumber
-                                  ).padStart(2, '0')}{' '}
-                                  de {week.year}
-                                </h3>
-
-                                <button
-                                  className="icon-btn"
-                                  title="Supprimer"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-
-                                    setConfirmState({
-                                      message: `Supprimer la semaine ${String(
-                                        week.weekNumber
-                                      ).padStart(
-                                        2,
-                                        '0'
-                                      )} de ${
-                                        week.year
-                                      } (${
-                                        week.userDisplayName
-                                      }) ?`,
-                                      onConfirm:
-                                        async () => {
-                                          await deletePlanningWeek(
-                                            week.id
-                                          );
-
-                                          setConfirmState(
-                                            null
-                                          );
-                                        },
-                                    });
-                                  }}
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
+                              <h3 className="font-display text-lg flex items-center gap-2">
+                                <UserCog size={16} />
+                                Semaine{' '}
+                                {String(
+                                  group.weekNumber
+                                ).padStart(2, '0')}{' '}
+                                de {group.year}
+                              </h3>
 
                               <p
-                                className="text-xs mt-2"
+                                className="text-xs mt-1"
                                 style={{
                                   color:
                                     'var(--ink-light)',
                                 }}
                               >
-                                {
-                                  week.userDisplayName
-                                }
+                                {formatWeekRangeFR(
+                                  group.monday
+                                )}
                               </p>
 
-                              <div className="flex items-center gap-2 mt-2">
+                              <div className="flex items-center gap-2 mt-2 flex-wrap">
                                 <span
                                   className="pill"
                                   style={{
                                     background:
-                                      week.status ===
-                                      'valide'
-                                        ? 'var(--pitch-tint)'
-                                        : 'var(--chalk)',
-                                    color:
-                                      week.status ===
-                                      'valide'
-                                        ? 'var(--pitch-dark)'
-                                        : 'var(--ink-light)',
-                                  }}
-                                >
-                                  {week.status ===
-                                  'valide'
-                                    ? 'Validée'
-                                    : 'Brouillon'}
-                                </span>
-
-                                <span
-                                  className="text-xs"
-                                  style={{
+                                      'var(--chalk)',
                                     color:
                                       'var(--ink-light)',
                                   }}
                                 >
-                                  {formatMinutes(
-                                    totalMinutes
-                                  )}
+                                  {group.weeks.length}{' '}
+                                  utilisateur
+                                  {group.weeks
+                                    .length > 1
+                                    ? 's'
+                                    : ''}
                                 </span>
+
+                                {validatedCount >
+                                  0 && (
+                                  <span
+                                    className="pill"
+                                    style={{
+                                      background:
+                                        'var(--pitch-tint)',
+                                      color:
+                                        'var(--pitch-dark)',
+                                    }}
+                                  >
+                                    {
+                                      validatedCount
+                                    }{' '}
+                                    validée
+                                    {validatedCount >
+                                    1
+                                      ? 's'
+                                      : ''}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           );
@@ -12661,6 +12692,187 @@ export default function MeleeApp() {
                       )}
                     </div>
                   )}
+                </div>
+              )}
+
+            {activeTab === 'gestion-planning' &&
+              selectedPlanningWeekGroup &&
+              !selectedPlanningWeek && (
+                <div>
+                  <button
+                    className="btn-secondary"
+                    onClick={() =>
+                      setSelectedPlanningWeekGroupKey(
+                        null
+                      )
+                    }
+                  >
+                    <ChevronLeft size={14} />
+                    Semaines
+                  </button>
+
+                  <div className="flex items-center justify-between flex-wrap gap-2 mt-3">
+                    <div>
+                      <h1 className="font-display text-2xl">
+                        Semaine{' '}
+                        {String(
+                          selectedPlanningWeekGroup.weekNumber
+                        ).padStart(2, '0')}{' '}
+                        de{' '}
+                        {
+                          selectedPlanningWeekGroup.year
+                        }
+                      </h1>
+
+                      <p
+                        className="text-sm mt-1"
+                        style={{
+                          color: 'var(--ink-light)',
+                        }}
+                      >
+                        {formatWeekRangeFR(
+                          selectedPlanningWeekGroup.monday
+                        )}
+                      </p>
+                    </div>
+
+                    <button
+                      className="btn-primary"
+                      onClick={() =>
+                        setShowPlanningWeekForm({
+                          lockedWeek: {
+                            week: selectedPlanningWeekGroup.weekNumber,
+                            year: selectedPlanningWeekGroup.year,
+                            dateIso: `${selectedPlanningWeekGroup.monday.getFullYear()}-${String(
+                              selectedPlanningWeekGroup.monday.getMonth() +
+                                1
+                            ).padStart(
+                              2,
+                              '0'
+                            )}-${String(
+                              selectedPlanningWeekGroup.monday.getDate()
+                            ).padStart(2, '0')}`,
+                          },
+                        })
+                      }
+                    >
+                      <Plus size={15} />
+                      Ajouter un utilisateur
+                    </button>
+                  </div>
+
+                  <div className="pitch-divider" />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
+                    {selectedPlanningWeekGroup.weeks.map(
+                      (week) => {
+                        const weekEntries =
+                          planningEntries.filter(
+                            (e) =>
+                              e.weekId === week.id
+                          );
+
+                        const totalMinutes =
+                          weekEntries.reduce(
+                            (sum, e) =>
+                              sum +
+                              entryDurationMinutes(
+                                e
+                              ),
+                            0
+                          );
+
+                        return (
+                          <div
+                            key={week.id}
+                            className="card"
+                            onClick={() =>
+                              setSelectedPlanningWeekId(
+                                week.id
+                              )
+                            }
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <h3 className="font-display text-lg flex items-center gap-2">
+                                <User size={16} />
+                                {
+                                  week.userDisplayName
+                                }
+                              </h3>
+
+                              <button
+                                className="icon-btn"
+                                title="Supprimer"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+
+                                  setConfirmState({
+                                    message: `Supprimer la semaine ${String(
+                                      week.weekNumber
+                                    ).padStart(
+                                      2,
+                                      '0'
+                                    )} de ${
+                                      week.year
+                                    } (${
+                                      week.userDisplayName
+                                    }) ?`,
+                                    onConfirm:
+                                      async () => {
+                                        await deletePlanningWeek(
+                                          week.id
+                                        );
+
+                                        setConfirmState(
+                                          null
+                                        );
+                                      },
+                                  });
+                                }}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+
+                            <div className="flex items-center gap-2 mt-2">
+                              <span
+                                className="pill"
+                                style={{
+                                  background:
+                                    week.status ===
+                                    'valide'
+                                      ? 'var(--pitch-tint)'
+                                      : 'var(--chalk)',
+                                  color:
+                                    week.status ===
+                                    'valide'
+                                      ? 'var(--pitch-dark)'
+                                      : 'var(--ink-light)',
+                                }}
+                              >
+                                {week.status ===
+                                'valide'
+                                  ? 'Validée'
+                                  : 'Brouillon'}
+                              </span>
+
+                              <span
+                                className="text-xs"
+                                style={{
+                                  color:
+                                    'var(--ink-light)',
+                                }}
+                              >
+                                {formatMinutes(
+                                  totalMinutes
+                                )}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -12676,7 +12888,10 @@ export default function MeleeApp() {
                     }
                   >
                     <ChevronLeft size={14} />
-                    Semaines
+                    Semaine{' '}
+                    {String(
+                      selectedPlanningWeek.weekNumber
+                    ).padStart(2, '0')}
                   </button>
 
                   <div className="flex items-center justify-between flex-wrap gap-2 mt-3">
@@ -12700,7 +12915,12 @@ export default function MeleeApp() {
                       >
                         {
                           selectedPlanningWeek.userDisplayName
-                        }
+                        }{' '}
+                        ·{' '}
+                        {selectedPlanningWeekMonday &&
+                          formatWeekRangeFR(
+                            selectedPlanningWeekMonday
+                          )}
                       </p>
                     </div>
 
@@ -15713,6 +15933,11 @@ export default function MeleeApp() {
       {showPlanningWeekForm && (
         <PlanningWeekFormModal
           users={users}
+          lockedWeek={
+            typeof showPlanningWeekForm === 'object'
+              ? showPlanningWeekForm.lockedWeek
+              : null
+          }
           onSubmit={createPlanningWeek}
           onCancel={() =>
             setShowPlanningWeekForm(false)
