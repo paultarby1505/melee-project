@@ -56,8 +56,11 @@ import {
   School,
   BookOpen,
   Users,
+  FileDown,
+  UserCog,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
+import { jsPDF } from 'jspdf';
 
 /* =========================================================
    SUPABASE
@@ -97,6 +100,16 @@ const DAYS_FULL_FR = [
   'jeudi',
   'vendredi',
   'samedi',
+];
+
+const DAY_LABELS_FULL = [
+  'Lundi',
+  'Mardi',
+  'Mercredi',
+  'Jeudi',
+  'Vendredi',
+  'Samedi',
+  'Dimanche',
 ];
 
 const PROJECT_COLORS = [
@@ -142,7 +155,23 @@ const STATUS_META = {
 const NAV_ITEMS = [
   { id: 'home', label: 'Accueil', icon: HomeIcon },
   { id: 'projects', label: 'Projets', icon: FolderKanban },
-  { id: 'planning', label: 'Planning', icon: CalendarDays },
+  {
+    id: 'planning',
+    label: 'Planning',
+    icon: CalendarDays,
+    children: [
+      {
+        id: 'planning',
+        label: 'Calendrier',
+        icon: CalendarDays,
+      },
+      {
+        id: 'gestion-planning',
+        label: 'Gestion planning',
+        icon: FileText,
+      },
+    ],
+  },
   { id: 'docs', label: 'Documents', icon: FileText },
   { id: 'finance', label: 'Finance', icon: Wallet },
   {
@@ -431,6 +460,73 @@ function getWeekDays(anchorDate) {
 
     return { date: d, iso };
   });
+}
+
+function getISOWeekYear(anchorDate) {
+  const d = new Date(
+    anchorDate.getFullYear(),
+    anchorDate.getMonth(),
+    anchorDate.getDate()
+  );
+
+  const dayNum = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - dayNum + 3);
+
+  const firstThursday = new Date(d.getFullYear(), 0, 4);
+  const firstThursdayDayNum = (firstThursday.getDay() + 6) % 7;
+  firstThursday.setDate(firstThursday.getDate() - firstThursdayDayNum + 3);
+
+  const week =
+    1 +
+    Math.round(
+      (d.getTime() - firstThursday.getTime()) /
+        (7 * 24 * 60 * 60 * 1000)
+    );
+
+  return { week, year: d.getFullYear() };
+}
+
+function getMondayOfISOWeek(week, year) {
+  const jan4 = new Date(year, 0, 4);
+  const jan4DayNum = (jan4.getDay() + 6) % 7;
+
+  const week1Monday = new Date(
+    year,
+    0,
+    4 - jan4DayNum
+  );
+
+  return new Date(
+    week1Monday.getFullYear(),
+    week1Monday.getMonth(),
+    week1Monday.getDate() + (week - 1) * 7
+  );
+}
+
+function parseTimeToMinutes(t) {
+  if (!t) return null;
+
+  const [h, m] = t.split(':').map(Number);
+
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+
+  return h * 60 + m;
+}
+
+function entryDurationMinutes(entry) {
+  const start = parseTimeToMinutes(entry.startTime);
+  const end = parseTimeToMinutes(entry.endTime);
+
+  if (start == null || end == null || end <= start) return 0;
+
+  return end - start;
+}
+
+function formatMinutes(total) {
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+
+  return `${h}h${String(m).padStart(2, '0')}`;
 }
 
 function getDmChannel(usernameA, usernameB) {
@@ -4730,6 +4826,259 @@ function DonutChart({ totalIn, totalOut, size = 160 }) {
   );
 }
 
+function PlanningWeekFormModal({
+  users,
+  onSubmit,
+  onCancel,
+}) {
+  const [userDisplayName, setUserDisplayName] =
+    useState(users[0]?.displayName || '');
+
+  const [date, setDate] = useState(todayISO());
+
+  const [error, setError] = useState('');
+
+  const { week, year } = getISOWeekYear(
+    new Date(date)
+  );
+
+  function submit() {
+    if (!userDisplayName) {
+      setError("L'utilisateur est obligatoire.");
+      return;
+    }
+
+    if (!date) {
+      setError('La date est obligatoire.');
+      return;
+    }
+
+    onSubmit({ userDisplayName, date });
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          Nouvelle semaine
+        </h3>
+
+        <div
+          className="mt-4"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+          }}
+        >
+          <div>
+            <label>Utilisateur</label>
+            <select
+              value={userDisplayName}
+              onChange={(e) =>
+                setUserDisplayName(e.target.value)
+              }
+            >
+              {users.map((u) => (
+                <option
+                  key={u.username}
+                  value={u.displayName}
+                >
+                  {u.displayName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label>Une date de la semaine concernée</label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) =>
+                setDate(e.target.value)
+              }
+              autoFocus
+            />
+          </div>
+
+          <p
+            className="text-sm"
+            style={{ color: 'var(--ink-light)' }}
+          >
+            Cela créera la{' '}
+            <strong>
+              Semaine {String(week).padStart(2, '0')} de{' '}
+              {year}
+            </strong>
+          </p>
+
+          {error && (
+            <p
+              className="text-xs"
+              style={{ color: 'var(--red)' }}
+            >
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            Créer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PlanningEntryFormModal({
+  dayLabel,
+  initial,
+  onSubmit,
+  onCancel,
+}) {
+  const [startTime, setStartTime] = useState(
+    initial?.startTime || ''
+  );
+
+  const [endTime, setEndTime] = useState(
+    initial?.endTime || ''
+  );
+
+  const [description, setDescription] = useState(
+    initial?.description || ''
+  );
+
+  const [error, setError] = useState('');
+
+  function submit() {
+    if (!startTime || !endTime) {
+      setError(
+        "L'heure de début et de fin sont obligatoires."
+      );
+      return;
+    }
+
+    if (endTime <= startTime) {
+      setError(
+        "L'heure de fin doit être après l'heure de début."
+      );
+      return;
+    }
+
+    onSubmit({
+      startTime,
+      endTime,
+      description: description.trim(),
+    });
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          {initial
+            ? `Modifier l'horaire — ${dayLabel}`
+            : `Ajouter un horaire — ${dayLabel}`}
+        </h3>
+
+        <div
+          className="mt-4"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+          }}
+        >
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label>Heure de début</label>
+              <input
+                type="time"
+                value={startTime}
+                onChange={(e) =>
+                  setStartTime(e.target.value)
+                }
+                autoFocus
+              />
+            </div>
+
+            <div>
+              <label>Heure de fin</label>
+              <input
+                type="time"
+                value={endTime}
+                onChange={(e) =>
+                  setEndTime(e.target.value)
+                }
+              />
+            </div>
+          </div>
+
+          <div>
+            <label>Descriptif</label>
+            <textarea
+              rows={3}
+              value={description}
+              onChange={(e) =>
+                setDescription(e.target.value)
+              }
+              placeholder="Ce qui a été fait sur ce créneau"
+            />
+          </div>
+
+          {error && (
+            <p
+              className="text-xs"
+              style={{ color: 'var(--red)' }}
+            >
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+
+          <button className="btn-primary" onClick={submit}>
+            {initial ? 'Enregistrer' : 'Ajouter'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TransactionFormModal({
   existing,
   initialProjectId,
@@ -5979,6 +6328,32 @@ export default function MeleeApp() {
     setShowEdrExerciseForm,
   ] = useState(null);
 
+  const [planningWeeks, setPlanningWeeks] =
+    useState([]);
+
+  const [planningEntries, setPlanningEntries] =
+    useState([]);
+
+  const [
+    selectedPlanningWeekId,
+    setSelectedPlanningWeekId,
+  ] = useState(null);
+
+  const [
+    showPlanningWeekForm,
+    setShowPlanningWeekForm,
+  ] = useState(false);
+
+  const [
+    showPlanningEntryForm,
+    setShowPlanningEntryForm,
+  ] = useState(null);
+
+  const [
+    validatingPlanningWeek,
+    setValidatingPlanningWeek,
+  ] = useState(false);
+
   const [dataLoaded, setDataLoaded] =
     useState(false);
 
@@ -6213,6 +6588,8 @@ export default function MeleeApp() {
         edrCategoriesResult,
         edrSessionsResult,
         edrExercisesResult,
+        planningWeeksResult,
+        planningEntriesResult,
       ] = await Promise.all([
         supabase
           .from('users')
@@ -6361,6 +6738,21 @@ export default function MeleeApp() {
           .order('created_at', {
             ascending: true,
           }),
+
+        supabase
+          .from('planning_weeks')
+          .select('*')
+          .order('year', { ascending: false })
+          .order('week_number', {
+            ascending: false,
+          }),
+
+        supabase
+          .from('planning_entries')
+          .select('*')
+          .order('day_index', {
+            ascending: true,
+          }),
       ]);
 
       if (usersResult.error)
@@ -6425,6 +6817,12 @@ export default function MeleeApp() {
 
       if (edrExercisesResult.error)
         throw edrExercisesResult.error;
+
+      if (planningWeeksResult.error)
+        throw planningWeeksResult.error;
+
+      if (planningEntriesResult.error)
+        throw planningEntriesResult.error;
 
       setUsers(
         (usersResult.data || []).map(
@@ -6714,6 +7112,36 @@ export default function MeleeApp() {
             title: e.title,
             content: e.content || '',
             createdBy: e.created_by || '',
+            createdAt: e.created_at,
+          })
+        )
+      );
+
+      setPlanningWeeks(
+        (planningWeeksResult.data || []).map(
+          (w) => ({
+            id: w.id,
+            userDisplayName: w.user_display_name,
+            weekNumber: w.week_number,
+            year: w.year,
+            status: w.status,
+            validatedAt: w.validated_at,
+            documentId: w.document_id,
+            createdBy: w.created_by || '',
+            createdAt: w.created_at,
+          })
+        )
+      );
+
+      setPlanningEntries(
+        (planningEntriesResult.data || []).map(
+          (e) => ({
+            id: e.id,
+            weekId: e.week_id,
+            dayIndex: e.day_index,
+            startTime: e.start_time || '',
+            endTime: e.end_time || '',
+            description: e.description || '',
             createdAt: e.created_at,
           })
         )
@@ -8569,6 +8997,400 @@ export default function MeleeApp() {
   }
 
   /* =====================================================
+     GESTION PLANNING
+  ===================================================== */
+
+  async function ensurePlanningFolder() {
+    const existing = docFolders.find(
+      (f) =>
+        f.name.trim().toLowerCase() === 'planning'
+    );
+
+    if (existing) return existing.id;
+
+    const id = genId();
+
+    const { error } =
+      await supabase.from('doc_folders').insert({
+        id,
+        name: 'Planning',
+        created_by: session.displayName,
+      });
+
+    if (error) throw error;
+
+    return id;
+  }
+
+  async function createPlanningWeek({
+    userDisplayName,
+    date,
+  }) {
+    try {
+      const { week, year } = getISOWeekYear(
+        new Date(date)
+      );
+
+      const exists = planningWeeks.some(
+        (w) =>
+          w.userDisplayName === userDisplayName &&
+          w.weekNumber === week &&
+          w.year === year
+      );
+
+      if (exists) {
+        showToast(
+          'Cette semaine existe déjà pour cet utilisateur.'
+        );
+        return;
+      }
+
+      const { error } =
+        await supabase
+          .from('planning_weeks')
+          .insert({
+            id: genId(),
+            user_display_name: userDisplayName,
+            week_number: week,
+            year,
+            status: 'brouillon',
+            created_by: session.displayName,
+          });
+
+      if (error) throw error;
+
+      await loadData();
+
+      setShowPlanningWeekForm(false);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de créer la semaine.'
+      );
+    }
+  }
+
+  async function deletePlanningWeek(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('planning_weeks')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      await loadData();
+
+      setSelectedPlanningWeekId(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de supprimer la semaine.'
+      );
+    }
+  }
+
+  async function savePlanningEntry(
+    weekId,
+    dayIndex,
+    data
+  ) {
+    try {
+      const editingEntry =
+        showPlanningEntryForm &&
+        typeof showPlanningEntryForm === 'object'
+          ? showPlanningEntryForm.entry
+          : null;
+
+      if (editingEntry) {
+        const { error } =
+          await supabase
+            .from('planning_entries')
+            .update({
+              start_time: data.startTime,
+              end_time: data.endTime,
+              description: data.description,
+            })
+            .eq('id', editingEntry.id);
+
+        if (error) throw error;
+      } else {
+        const { error } =
+          await supabase
+            .from('planning_entries')
+            .insert({
+              id: genId(),
+              week_id: weekId,
+              day_index: dayIndex,
+              start_time: data.startTime,
+              end_time: data.endTime,
+              description: data.description,
+            });
+
+        if (error) throw error;
+      }
+
+      await loadData();
+
+      setShowPlanningEntryForm(null);
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible d'enregistrer l'horaire."
+      );
+    }
+  }
+
+  async function deletePlanningEntry(id) {
+    try {
+      const { error } =
+        await supabase
+          .from('planning_entries')
+          .delete()
+          .eq('id', id);
+
+      if (error) throw error;
+
+      await loadData();
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        "Impossible de supprimer l'horaire."
+      );
+    }
+  }
+
+  function buildPlanningPdf(week, entries, monday) {
+    const doc = new jsPDF();
+    const marginX = 15;
+    const pageWidth = 210;
+    const maxY = 280;
+    let y = 20;
+
+    function ensureSpace(next) {
+      if (y + next > maxY) {
+        doc.addPage();
+        y = 20;
+      }
+    }
+
+    doc.setFontSize(16);
+    doc.text(
+      'Feuille de temps hebdomadaire',
+      marginX,
+      y
+    );
+    y += 10;
+
+    doc.setFontSize(11);
+    doc.text(
+      `Semaine ${String(
+        week.weekNumber
+      ).padStart(2, '0')} de ${week.year}`,
+      marginX,
+      y
+    );
+    y += 7;
+
+    doc.text(
+      `Utilisateur : ${week.userDisplayName}`,
+      marginX,
+      y
+    );
+    y += 10;
+
+    let weekTotalMinutes = 0;
+
+    DAY_LABELS_FULL.forEach((label, dayIndex) => {
+      const dayEntries = entries
+        .filter((e) => e.dayIndex === dayIndex)
+        .sort((a, b) =>
+          (a.startTime || '').localeCompare(
+            b.startTime || ''
+          )
+        );
+
+      const dayDate = new Date(
+        monday.getFullYear(),
+        monday.getMonth(),
+        monday.getDate() + dayIndex
+      );
+
+      const dateLabel = `${String(
+        dayDate.getDate()
+      ).padStart(2, '0')}/${String(
+        dayDate.getMonth() + 1
+      ).padStart(2, '0')}`;
+
+      ensureSpace(14);
+
+      doc.setFontSize(12);
+      doc.setFont(undefined, 'bold');
+      doc.text(
+        `${label} ${dateLabel}`,
+        marginX,
+        y
+      );
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(10);
+
+      let dayTotalMinutes = 0;
+
+      if (dayEntries.length === 0) {
+        y += 6;
+        doc.setTextColor(140, 140, 140);
+        doc.text(
+          'Aucun horaire',
+          marginX + 4,
+          y
+        );
+        doc.setTextColor(0, 0, 0);
+        y += 6;
+      } else {
+        dayEntries.forEach((entry) => {
+          const duration =
+            entryDurationMinutes(entry);
+          dayTotalMinutes += duration;
+
+          const desc = entry.description
+            ? doc.splitTextToSize(
+                entry.description,
+                130
+              )
+            : [''];
+
+          ensureSpace(6 * desc.length + 2);
+          y += 6;
+
+          doc.text(
+            `${entry.startTime || '--:--'} - ${
+              entry.endTime || '--:--'
+            }  (${formatMinutes(duration)})`,
+            marginX + 4,
+            y
+          );
+
+          if (desc[0]) {
+            doc.text(desc, marginX + 4, y + 5);
+            y += 5 * desc.length;
+          }
+        });
+
+        y += 6;
+        doc.setFont(undefined, 'bold');
+        doc.text(
+          `Total jour : ${formatMinutes(
+            dayTotalMinutes
+          )}`,
+          marginX + 4,
+          y
+        );
+        doc.setFont(undefined, 'normal');
+      }
+
+      weekTotalMinutes += dayTotalMinutes;
+      y += 4;
+      doc.setDrawColor(210, 210, 210);
+      doc.line(
+        marginX,
+        y,
+        pageWidth - marginX,
+        y
+      );
+      y += 4;
+    });
+
+    ensureSpace(12);
+    y += 4;
+
+    doc.setFontSize(13);
+    doc.setFont(undefined, 'bold');
+    doc.text(
+      `Total semaine (lundi au dimanche) : ${formatMinutes(
+        weekTotalMinutes
+      )}`,
+      marginX,
+      y
+    );
+    doc.setFont(undefined, 'normal');
+
+    return doc;
+  }
+
+  async function validatePlanningWeek(
+    week,
+    entries,
+    monday
+  ) {
+    try {
+      setValidatingPlanningWeek(true);
+
+      const pdf = buildPlanningPdf(
+        week,
+        entries,
+        monday
+      );
+
+      const blob = pdf.output('blob');
+
+      const fileName = `Semaine_${String(
+        week.weekNumber
+      ).padStart(2, '0')}_${
+        week.year
+      }_${week.userDisplayName.replace(
+        /\s+/g,
+        '_'
+      )}.pdf`;
+
+      const file = new File(
+        [blob],
+        fileName,
+        { type: 'application/pdf' }
+      );
+
+      const folderId =
+        await ensurePlanningFolder();
+
+      const docId = await uploadDocumentFile({
+        file,
+        name: fileName,
+        folderId,
+        projectId: null,
+        taskId: null,
+      });
+
+      const { error } =
+        await supabase
+          .from('planning_weeks')
+          .update({
+            status: 'valide',
+            validated_at: new Date().toISOString(),
+            document_id: docId,
+          })
+          .eq('id', week.id);
+
+      if (error) throw error;
+
+      await loadData();
+
+      showToast('Semaine validée et PDF généré.');
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de valider la semaine.'
+      );
+    } finally {
+      setValidatingPlanningWeek(false);
+    }
+  }
+
+  /* =====================================================
      EVALUATIONS
   ===================================================== */
 
@@ -8813,6 +9635,7 @@ export default function MeleeApp() {
     setSelectedSessionId(null);
     setSelectedCategoryId(null);
     setSelectedEdrSessionId(null);
+    setSelectedPlanningWeekId(null);
     setOpenNavMenu(null);
   }
 
@@ -9010,6 +9833,77 @@ export default function MeleeApp() {
             e.sessionId === selectedEdrSession.id
         )
       : [];
+
+  const sortedPlanningWeeks = useMemo(
+    () =>
+      [...planningWeeks].sort((a, b) => {
+        if (a.year !== b.year)
+          return b.year - a.year;
+        return b.weekNumber - a.weekNumber;
+      }),
+    [planningWeeks]
+  );
+
+  const selectedPlanningWeek =
+    selectedPlanningWeekId
+      ? planningWeeks.find(
+          (w) => w.id === selectedPlanningWeekId
+        )
+      : null;
+
+  const selectedPlanningWeekEntries =
+    selectedPlanningWeek
+      ? planningEntries
+          .filter(
+            (e) =>
+              e.weekId === selectedPlanningWeek.id
+          )
+          .sort(
+            (a, b) => a.dayIndex - b.dayIndex
+          )
+      : [];
+
+  const selectedPlanningWeekMonday =
+    selectedPlanningWeek
+      ? getMondayOfISOWeek(
+          selectedPlanningWeek.weekNumber,
+          selectedPlanningWeek.year
+        )
+      : null;
+
+  const selectedPlanningWeekTotalMinutes =
+    selectedPlanningWeekEntries.reduce(
+      (sum, e) => sum + entryDurationMinutes(e),
+      0
+    );
+
+  const selectedPlanningWeekDays = useMemo(() => {
+    if (!selectedPlanningWeekMonday) return [];
+
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(
+        selectedPlanningWeekMonday.getFullYear(),
+        selectedPlanningWeekMonday.getMonth(),
+        selectedPlanningWeekMonday.getDate() + i
+      );
+
+      const iso = `${d.getFullYear()}-${String(
+        d.getMonth() + 1
+      ).padStart(2, '0')}-${String(
+        d.getDate()
+      ).padStart(2, '0')}`;
+
+      return { date: d, iso, dayIndex: i };
+    });
+  }, [selectedPlanningWeekMonday]);
+
+  const planningValidatedDocument =
+    selectedPlanningWeek?.documentId
+      ? documents.find(
+          (d) =>
+            d.id === selectedPlanningWeek.documentId
+        )
+      : null;
 
   const activeProjectsCount =
     projects.filter(
@@ -11604,6 +12498,491 @@ export default function MeleeApp() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+            {/* GESTION PLANNING */}
+
+            {activeTab === 'gestion-planning' &&
+              !selectedPlanningWeek && (
+                <div>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <h1 className="font-display text-2xl">
+                      Gestion planning
+                    </h1>
+
+                    <button
+                      className="btn-primary"
+                      onClick={() =>
+                        setShowPlanningWeekForm(true)
+                      }
+                    >
+                      <Plus size={15} />
+                      Nouvelle semaine
+                    </button>
+                  </div>
+
+                  <div className="pitch-divider" />
+
+                  {sortedPlanningWeeks.length ===
+                  0 ? (
+                    <p
+                      className="text-sm mt-2"
+                      style={{
+                        color: 'var(--ink-light)',
+                      }}
+                    >
+                      Aucune semaine enregistrée
+                      pour l'instant.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
+                      {sortedPlanningWeeks.map(
+                        (week) => {
+                          const weekEntries =
+                            planningEntries.filter(
+                              (e) =>
+                                e.weekId === week.id
+                            );
+
+                          const totalMinutes =
+                            weekEntries.reduce(
+                              (sum, e) =>
+                                sum +
+                                entryDurationMinutes(
+                                  e
+                                ),
+                              0
+                            );
+
+                          return (
+                            <div
+                              key={week.id}
+                              className="card"
+                              onClick={() =>
+                                setSelectedPlanningWeekId(
+                                  week.id
+                                )
+                              }
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <h3 className="font-display text-lg flex items-center gap-2">
+                                  <UserCog size={16} />
+                                  Semaine{' '}
+                                  {String(
+                                    week.weekNumber
+                                  ).padStart(2, '0')}{' '}
+                                  de {week.year}
+                                </h3>
+
+                                <button
+                                  className="icon-btn"
+                                  title="Supprimer"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+
+                                    setConfirmState({
+                                      message: `Supprimer la semaine ${String(
+                                        week.weekNumber
+                                      ).padStart(
+                                        2,
+                                        '0'
+                                      )} de ${
+                                        week.year
+                                      } (${
+                                        week.userDisplayName
+                                      }) ?`,
+                                      onConfirm:
+                                        async () => {
+                                          await deletePlanningWeek(
+                                            week.id
+                                          );
+
+                                          setConfirmState(
+                                            null
+                                          );
+                                        },
+                                    });
+                                  }}
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+
+                              <p
+                                className="text-xs mt-2"
+                                style={{
+                                  color:
+                                    'var(--ink-light)',
+                                }}
+                              >
+                                {
+                                  week.userDisplayName
+                                }
+                              </p>
+
+                              <div className="flex items-center gap-2 mt-2">
+                                <span
+                                  className="pill"
+                                  style={{
+                                    background:
+                                      week.status ===
+                                      'valide'
+                                        ? 'var(--pitch-tint)'
+                                        : 'var(--chalk)',
+                                    color:
+                                      week.status ===
+                                      'valide'
+                                        ? 'var(--pitch-dark)'
+                                        : 'var(--ink-light)',
+                                  }}
+                                >
+                                  {week.status ===
+                                  'valide'
+                                    ? 'Validée'
+                                    : 'Brouillon'}
+                                </span>
+
+                                <span
+                                  className="text-xs"
+                                  style={{
+                                    color:
+                                      'var(--ink-light)',
+                                  }}
+                                >
+                                  {formatMinutes(
+                                    totalMinutes
+                                  )}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        }
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+            {activeTab === 'gestion-planning' &&
+              selectedPlanningWeek && (
+                <div>
+                  <button
+                    className="btn-secondary"
+                    onClick={() =>
+                      setSelectedPlanningWeekId(
+                        null
+                      )
+                    }
+                  >
+                    <ChevronLeft size={14} />
+                    Semaines
+                  </button>
+
+                  <div className="flex items-center justify-between flex-wrap gap-2 mt-3">
+                    <div>
+                      <h1 className="font-display text-2xl">
+                        Semaine{' '}
+                        {String(
+                          selectedPlanningWeek.weekNumber
+                        ).padStart(2, '0')}{' '}
+                        de{' '}
+                        {
+                          selectedPlanningWeek.year
+                        }
+                      </h1>
+
+                      <p
+                        className="text-sm mt-1"
+                        style={{
+                          color: 'var(--ink-light)',
+                        }}
+                      >
+                        {
+                          selectedPlanningWeek.userDisplayName
+                        }
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="pill"
+                        style={{
+                          background:
+                            selectedPlanningWeek.status ===
+                            'valide'
+                              ? 'var(--pitch-tint)'
+                              : 'var(--chalk)',
+                          color:
+                            selectedPlanningWeek.status ===
+                            'valide'
+                              ? 'var(--pitch-dark)'
+                              : 'var(--ink-light)',
+                        }}
+                      >
+                        {selectedPlanningWeek.status ===
+                        'valide'
+                          ? 'Validée'
+                          : 'Brouillon'}
+                      </span>
+
+                      <button
+                        className="icon-btn"
+                        title="Supprimer"
+                        onClick={() =>
+                          setConfirmState({
+                            message:
+                              'Supprimer cette semaine ?',
+                            onConfirm: async () => {
+                              await deletePlanningWeek(
+                                selectedPlanningWeek.id
+                              );
+
+                              setConfirmState(
+                                null
+                              );
+                            },
+                          })
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pitch-divider" />
+
+                  {selectedPlanningWeekDays.map(
+                    (day) => {
+                      const dayEntries =
+                        selectedPlanningWeekEntries.filter(
+                          (e) =>
+                            e.dayIndex ===
+                            day.dayIndex
+                        );
+
+                      const dayTotal =
+                        dayEntries.reduce(
+                          (sum, e) =>
+                            sum +
+                            entryDurationMinutes(
+                              e
+                            ),
+                          0
+                        );
+
+                      return (
+                        <div
+                          key={day.dayIndex}
+                          className="mt-3"
+                          style={{
+                            borderBottom:
+                              '1px solid var(--line)',
+                            paddingBottom: 12,
+                          }}
+                        >
+                          <div className="flex items-center justify-between">
+                            <h3 className="font-display text-base">
+                              {
+                                DAY_LABELS_FULL[
+                                  day.dayIndex
+                                ]
+                              }{' '}
+                              {formatDateFR(
+                                day.iso
+                              )}
+                            </h3>
+
+                            <div className="flex items-center gap-2">
+                              {dayTotal > 0 && (
+                                <span
+                                  className="text-xs"
+                                  style={{
+                                    color:
+                                      'var(--ink-light)',
+                                  }}
+                                >
+                                  {formatMinutes(
+                                    dayTotal
+                                  )}
+                                </span>
+                              )}
+
+                              {selectedPlanningWeek.status !==
+                                'valide' && (
+                                <button
+                                  className="icon-btn"
+                                  title="Ajouter un horaire"
+                                  onClick={() =>
+                                    setShowPlanningEntryForm(
+                                      {
+                                        dayIndex:
+                                          day.dayIndex,
+                                        entry: null,
+                                      }
+                                    )
+                                  }
+                                >
+                                  <Plus size={14} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {dayEntries.length ===
+                          0 ? (
+                            <p
+                              className="text-xs mt-1"
+                              style={{
+                                color:
+                                  'var(--ink-light)',
+                              }}
+                            >
+                              Aucun horaire
+                            </p>
+                          ) : (
+                            <div className="mt-1">
+                              {dayEntries.map(
+                                (entry) => (
+                                  <div
+                                    key={entry.id}
+                                    className="flex items-center justify-between gap-2 py-1"
+                                  >
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-medium">
+                                        {
+                                          entry.startTime
+                                        }{' '}
+                                        –{' '}
+                                        {
+                                          entry.endTime
+                                        }
+                                        <span
+                                          className="text-xs"
+                                          style={{
+                                            color:
+                                              'var(--ink-light)',
+                                            marginLeft: 8,
+                                          }}
+                                        >
+                                          {formatMinutes(
+                                            entryDurationMinutes(
+                                              entry
+                                            )
+                                          )}
+                                        </span>
+                                      </p>
+
+                                      {entry.description && (
+                                        <p
+                                          className="text-xs"
+                                          style={{
+                                            color:
+                                              'var(--ink-light)',
+                                          }}
+                                        >
+                                          {
+                                            entry.description
+                                          }
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    {selectedPlanningWeek.status !==
+                                      'valide' && (
+                                      <div className="flex items-center gap-1">
+                                        <button
+                                          className="icon-btn"
+                                          onClick={() =>
+                                            setShowPlanningEntryForm(
+                                              {
+                                                dayIndex:
+                                                  day.dayIndex,
+                                                entry,
+                                              }
+                                            )
+                                          }
+                                        >
+                                          <Pencil
+                                            size={13}
+                                          />
+                                        </button>
+
+                                        <button
+                                          className="icon-btn"
+                                          onClick={() =>
+                                            deletePlanningEntry(
+                                              entry.id
+                                            )
+                                          }
+                                        >
+                                          <Trash2
+                                            size={13}
+                                          />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+                  )}
+
+                  <div className="flex items-center justify-between flex-wrap gap-3 mt-4">
+                    <p className="font-display text-lg">
+                      Total semaine :{' '}
+                      {formatMinutes(
+                        selectedPlanningWeekTotalMinutes
+                      )}
+                    </p>
+
+                    {selectedPlanningWeek.status ===
+                    'valide' ? (
+                      planningValidatedDocument && (
+                        <a
+                          className="btn-secondary"
+                          href={getDocumentUrl(
+                            planningValidatedDocument
+                          )}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <FileDown size={14} />
+                          Voir le PDF
+                        </a>
+                      )
+                    ) : (
+                      <button
+                        className="btn-primary"
+                        disabled={
+                          validatingPlanningWeek ||
+                          selectedPlanningWeekEntries.length ===
+                            0
+                        }
+                        onClick={() =>
+                          validatePlanningWeek(
+                            selectedPlanningWeek,
+                            selectedPlanningWeekEntries,
+                            selectedPlanningWeekMonday
+                          )
+                        }
+                      >
+                        {validatingPlanningWeek ? (
+                          <Loader2
+                            size={15}
+                            className="animate-spin"
+                          />
+                        ) : (
+                          <FileDown size={15} />
+                        )}
+                        Valider la semaine
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -14325,6 +15704,41 @@ export default function MeleeApp() {
           }
           onCancel={() =>
             setShowEdrExerciseForm(null)
+          }
+        />
+      )}
+
+      {/* GESTION PLANNING : SEMAINE / HORAIRE */}
+
+      {showPlanningWeekForm && (
+        <PlanningWeekFormModal
+          users={users}
+          onSubmit={createPlanningWeek}
+          onCancel={() =>
+            setShowPlanningWeekForm(false)
+          }
+        />
+      )}
+
+      {showPlanningEntryForm && (
+        <PlanningEntryFormModal
+          dayLabel={
+            DAY_LABELS_FULL[
+              showPlanningEntryForm.dayIndex
+            ]
+          }
+          initial={
+            showPlanningEntryForm.entry || null
+          }
+          onSubmit={(data) =>
+            savePlanningEntry(
+              selectedPlanningWeek.id,
+              showPlanningEntryForm.dayIndex,
+              data
+            )
+          }
+          onCancel={() =>
+            setShowPlanningEntryForm(null)
           }
         />
       )}
