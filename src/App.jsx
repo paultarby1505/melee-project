@@ -684,6 +684,53 @@ function getDayOffInfo(iso) {
   return null;
 }
 
+function dateToISO(d) {
+  return `${d.getFullYear()}-${String(
+    d.getMonth() + 1
+  ).padStart(2, '0')}-${String(d.getDate()).padStart(
+    2,
+    '0'
+  )}`;
+}
+
+function computeAutoSessionDates({
+  startIso,
+  count,
+  allSessions,
+}) {
+  const [y, m, d] = startIso.split('-').map(Number);
+  let candidate = new Date(y, m - 1, d);
+
+  const occupiedDates = new Set(
+    allSessions.map((s) => s.date)
+  );
+
+  const results = [];
+  let iterations = 0;
+
+  while (results.length < count && iterations < 260) {
+    iterations++;
+
+    const iso = dateToISO(candidate);
+
+    if (
+      !getDayOffInfo(iso) &&
+      !occupiedDates.has(iso)
+    ) {
+      results.push(iso);
+      occupiedDates.add(iso);
+    }
+
+    candidate = new Date(
+      candidate.getFullYear(),
+      candidate.getMonth(),
+      candidate.getDate() + 7
+    );
+  }
+
+  return results;
+}
+
 function sanitizeFileName(str) {
   return str
     .normalize('NFD')
@@ -2927,6 +2974,58 @@ function SessionFormModal({
 
           <button className="btn-primary" onClick={submit}>
             {initial ? 'Enregistrer' : 'Ajouter'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AutoScheduleOfferModal({
+  remaining,
+  onConfirm,
+  onCancel,
+}) {
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          Programmer les séances suivantes ?
+        </h3>
+
+        <p
+          className="text-sm mt-2"
+          style={{ color: 'var(--ink-light)' }}
+        >
+          {remaining} séance
+          {remaining > 1 ? 's' : ''} de plus{' '}
+          {remaining > 1
+            ? 'peuvent être programmées'
+            : 'peut être programmée'}{' '}
+          automatiquement, une par semaine le même
+          jour, en évitant les jours fériés, les
+          vacances scolaires et les dates déjà
+          prises par une autre séance.
+        </p>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Non merci
+          </button>
+
+          <button className="btn-primary" onClick={onConfirm}>
+            Programmer
           </button>
         </div>
       </div>
@@ -6783,6 +6882,9 @@ export default function MeleeApp() {
   const [showSessionForm, setShowSessionForm] =
     useState(null);
 
+  const [autoScheduleOffer, setAutoScheduleOffer] =
+    useState(null);
+
   const [showExerciseForm, setShowExerciseForm] =
     useState(null);
 
@@ -8863,10 +8965,15 @@ export default function MeleeApp() {
 
   async function saveSession(classId, data) {
     try {
-      if (
+      const isEditing =
         showSessionForm &&
-        typeof showSessionForm === 'object'
-      ) {
+        typeof showSessionForm === 'object';
+
+      const wasFirstSession =
+        !isEditing &&
+        selectedClassSessions.length === 0;
+
+      if (isEditing) {
         const { error } =
           await supabase
             .from('school_sessions')
@@ -8895,11 +9002,79 @@ export default function MeleeApp() {
       await loadData();
 
       setShowSessionForm(null);
+
+      if (wasFirstSession) {
+        setAutoScheduleOffer({
+          classId,
+          startDate: data.date,
+        });
+      }
     } catch (error) {
       console.error(error);
 
       showToast(
         "Impossible d'enregistrer la séance."
+      );
+    }
+  }
+
+  async function autoScheduleRemainingSessions(
+    classId,
+    startIso
+  ) {
+    try {
+      const cls = schoolClasses.find(
+        (c) => c.id === classId
+      );
+
+      const existingCount = schoolSessions.filter(
+        (s) => s.classId === classId
+      ).length;
+
+      const remaining = 6 - existingCount;
+
+      if (remaining <= 0) return;
+
+      const dates = computeAutoSessionDates({
+        startIso,
+        count: remaining,
+        allSessions: schoolSessions,
+      });
+
+      if (dates.length === 0) {
+        showToast(
+          "Impossible de programmer d'autres séances sans conflit."
+        );
+        return;
+      }
+
+      const rows = dates.map((date) => ({
+        id: genId(),
+        class_id: classId,
+        session_date: date,
+        session_time: cls?.time || null,
+        created_by: session.displayName,
+      }));
+
+      const { error } =
+        await supabase
+          .from('school_sessions')
+          .insert(rows);
+
+      if (error) throw error;
+
+      await loadData();
+
+      showToast(
+        dates.length < remaining
+          ? `${dates.length} séance(s) programmée(s) — certaines semaines ont été ignorées (férié, vacances ou date déjà prise).`
+          : `${dates.length} séance(s) programmée(s) automatiquement.`
+      );
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        'Impossible de programmer les séances automatiquement.'
       );
     }
   }
@@ -15063,6 +15238,46 @@ export default function MeleeApp() {
                         <Plus size={13} />
                         Séance
                       </button>
+
+                      {selectedClassSessions.length >
+                        0 &&
+                        selectedClassSessions.length <
+                          6 && (
+                          <button
+                            className="btn-secondary"
+                            onClick={() => {
+                              const last =
+                                selectedClassSessions[
+                                  selectedClassSessions.length -
+                                    1
+                                ];
+
+                              const [y, m, d] =
+                                last.date
+                                  .split('-')
+                                  .map(Number);
+
+                              const nextDate =
+                                new Date(
+                                  y,
+                                  m - 1,
+                                  d + 7
+                                );
+
+                              setAutoScheduleOffer({
+                                classId:
+                                  selectedClass.id,
+                                startDate:
+                                  dateToISO(
+                                    nextDate
+                                  ),
+                              });
+                            }}
+                          >
+                            <Calendar size={13} />
+                            Planifier la suite
+                          </button>
+                        )}
                     </div>
                   </div>
 
@@ -16387,6 +16602,31 @@ export default function MeleeApp() {
           }
           onCancel={() =>
             setShowSessionForm(null)
+          }
+        />
+      )}
+
+      {autoScheduleOffer && (
+        <AutoScheduleOfferModal
+          remaining={
+            6 -
+            schoolSessions.filter(
+              (s) =>
+                s.classId ===
+                autoScheduleOffer.classId
+            ).length
+          }
+          onConfirm={async () => {
+            const offer = autoScheduleOffer;
+            setAutoScheduleOffer(null);
+
+            await autoScheduleRemainingSessions(
+              offer.classId,
+              offer.startDate
+            );
+          }}
+          onCancel={() =>
+            setAutoScheduleOffer(null)
           }
         />
       )}
