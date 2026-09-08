@@ -712,30 +712,9 @@ function timeRangesOverlap(
   return aStart < bEnd && bStart < aEnd;
 }
 
-function computeAutoSessionDates({
-  startIso,
-  count,
-  time,
-  durationMinutes,
-  occupiedIntervals,
-}) {
+function computeAutoSessionDates({ startIso, count }) {
   const [y, m, d] = startIso.split('-').map(Number);
   let candidate = new Date(y, m - 1, d);
-
-  const placed = [];
-
-  function hasConflict(iso) {
-    return [...occupiedIntervals, ...placed]
-      .filter((o) => o.date === iso)
-      .some((o) =>
-        timeRangesOverlap(
-          time,
-          durationMinutes,
-          o.start,
-          o.duration
-        )
-      );
-  }
 
   const results = [];
   let iterations = 0;
@@ -745,14 +724,8 @@ function computeAutoSessionDates({
 
     const iso = dateToISO(candidate);
 
-    if (!getDayOffInfo(iso) && !hasConflict(iso)) {
+    if (!getDayOffInfo(iso)) {
       results.push(iso);
-
-      placed.push({
-        date: iso,
-        start: time,
-        duration: durationMinutes,
-      });
     }
 
     candidate = new Date(
@@ -763,6 +736,51 @@ function computeAutoSessionDates({
   }
 
   return results;
+}
+
+function findSessionConflict(
+  session,
+  allSessions,
+  allClasses
+) {
+  const cls = allClasses.find(
+    (c) => c.id === session.classId
+  );
+
+  const duration = cls?.durationMinutes || 60;
+
+  const conflict = allSessions.find((other) => {
+    if (other.id === session.id) return false;
+    if (other.date !== session.date) return false;
+
+    const otherCls = allClasses.find(
+      (c) => c.id === other.classId
+    );
+
+    const otherDuration =
+      otherCls?.durationMinutes || 60;
+
+    return timeRangesOverlap(
+      session.time,
+      duration,
+      other.time,
+      otherDuration
+    );
+  });
+
+  if (!conflict) return null;
+
+  const conflictClass = allClasses.find(
+    (c) => c.id === conflict.classId
+  );
+
+  return {
+    session: conflict,
+    className: conflictClass
+      ? conflictClass.name
+      : 'une autre classe',
+    time: conflict.time,
+  };
 }
 
 function sanitizeFileName(str) {
@@ -3048,9 +3066,11 @@ function AutoScheduleOfferModal({
             ? 'peuvent être programmées'
             : 'peut être programmée'}{' '}
           automatiquement, une par semaine le même
-          jour, en évitant les jours fériés, les
-          vacances scolaires et les dates déjà
-          prises par une autre séance.
+          jour, en évitant les jours fériés et les
+          vacances scolaires. Si une date tombe en
+          conflit avec une autre classe, elle sera
+          quand même programmée mais affichée en
+          rouge avec la raison.
         </p>
 
         <div className="flex justify-end gap-2 mt-5">
@@ -9038,9 +9058,19 @@ export default function MeleeApp() {
       setShowSessionForm(null);
 
       if (wasFirstSession) {
+        const [fy, fm, fd] = data.date
+          .split('-')
+          .map(Number);
+
+        const nextWeek = new Date(
+          fy,
+          fm - 1,
+          fd + 7
+        );
+
         setAutoScheduleOffer({
           classId,
-          startDate: data.date,
+          startDate: dateToISO(nextWeek),
         });
       }
     } catch (error) {
@@ -9069,33 +9099,14 @@ export default function MeleeApp() {
 
       if (remaining <= 0) return;
 
-      const occupiedIntervals = schoolSessions.map(
-        (s) => {
-          const otherCls = schoolClasses.find(
-            (c) => c.id === s.classId
-          );
-
-          return {
-            date: s.date,
-            start: s.time,
-            duration:
-              otherCls?.durationMinutes || null,
-          };
-        }
-      );
-
       const dates = computeAutoSessionDates({
         startIso,
         count: remaining,
-        time: cls?.time || null,
-        durationMinutes:
-          cls?.durationMinutes || null,
-        occupiedIntervals,
       });
 
       if (dates.length === 0) {
         showToast(
-          "Impossible de programmer d'autres séances sans conflit."
+          "Impossible de programmer d'autres séances."
         );
         return;
       }
@@ -9117,9 +9128,25 @@ export default function MeleeApp() {
 
       await loadData();
 
+      const hasConflicts = dates.some((date) =>
+        schoolSessions.some(
+          (s) =>
+            s.classId !== classId &&
+            s.date === date &&
+            timeRangesOverlap(
+              cls?.time || null,
+              cls?.durationMinutes || 60,
+              s.time,
+              schoolClasses.find(
+                (c) => c.id === s.classId
+              )?.durationMinutes || 60
+            )
+        )
+      );
+
       showToast(
-        dates.length < remaining
-          ? `${dates.length} séance(s) programmée(s) — certaines semaines ont été ignorées (férié, vacances ou date déjà prise).`
+        hasConflicts
+          ? `${dates.length} séance(s) programmée(s) — certaines sont en conflit avec une autre classe (affiché en rouge).`
           : `${dates.length} séance(s) programmée(s) automatiquement.`
       );
     } catch (error) {
@@ -15353,6 +15380,13 @@ export default function MeleeApp() {
                               sess.id
                           ).length;
 
+                        const conflict =
+                          findSessionConflict(
+                            sess,
+                            schoolSessions,
+                            schoolClasses
+                          );
+
                         return (
                           <div
                             key={sess.id}
@@ -15368,7 +15402,9 @@ export default function MeleeApp() {
                                 height: 34,
                                 borderRadius: 8,
                                 background:
-                                  'var(--pitch-tint)',
+                                  conflict
+                                    ? 'rgba(178,58,48,0.15)'
+                                    : 'var(--pitch-tint)',
                                 display: 'flex',
                                 alignItems:
                                   'center',
@@ -15385,7 +15421,11 @@ export default function MeleeApp() {
                             >
                               <Calendar
                                 size={16}
-                                color="var(--pitch-dark)"
+                                color={
+                                  conflict
+                                    ? 'var(--red)'
+                                    : 'var(--pitch-dark)'
+                                }
                               />
                             </div>
 
@@ -15400,7 +15440,14 @@ export default function MeleeApp() {
                                 )
                               }
                             >
-                              <p className="text-sm font-medium">
+                              <p
+                                className="text-sm font-medium"
+                                style={{
+                                  color: conflict
+                                    ? 'var(--red)'
+                                    : 'var(--ink)',
+                                }}
+                              >
                                 {formatDateFR(
                                   sess.date
                                 )}
@@ -15411,8 +15458,9 @@ export default function MeleeApp() {
                                   <span
                                     className="text-xs"
                                     style={{
-                                      color:
-                                        'var(--ink-light)',
+                                      color: conflict
+                                        ? 'var(--red)'
+                                        : 'var(--ink-light)',
                                     }}
                                   >
                                     {sess.time}
@@ -15433,6 +15481,22 @@ export default function MeleeApp() {
                                     : ''}
                                 </span>
                               </div>
+
+                              {conflict && (
+                                <p
+                                  className="text-xs mt-1"
+                                  style={{
+                                    color:
+                                      'var(--red)',
+                                  }}
+                                >
+                                  Conflit avec{' '}
+                                  {
+                                    conflict.className
+                                  }{' '}
+                                  à {conflict.time}
+                                </p>
+                              )}
                             </div>
 
                             <button
