@@ -522,6 +522,168 @@ function formatWeekRangeFR(monday) {
   )} – ${formatDateFR(isoOf(sunday))}`;
 }
 
+function getEasterSunday(year) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor(
+    (h + l - 7 * m + 114) / 31
+  );
+  const day =
+    ((h + l - 7 * m + 114) % 31) + 1;
+
+  return new Date(year, month - 1, day);
+}
+
+const publicHolidaysCache = {};
+
+function getFrenchPublicHolidaysForYear(year) {
+  if (publicHolidaysCache[year]) {
+    return publicHolidaysCache[year];
+  }
+
+  const easter = getEasterSunday(year);
+
+  const addDays = (date, days) =>
+    new Date(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate() + days
+    );
+
+  const toIso = (d) =>
+    `${d.getFullYear()}-${String(
+      d.getMonth() + 1
+    ).padStart(2, '0')}-${String(
+      d.getDate()
+    ).padStart(2, '0')}`;
+
+  const entries = [
+    [`${year}-01-01`, "Jour de l'An"],
+    [`${year}-05-01`, 'Fête du Travail'],
+    [`${year}-05-08`, 'Victoire 1945'],
+    [`${year}-07-14`, 'Fête Nationale'],
+    [`${year}-08-15`, 'Assomption'],
+    [`${year}-11-01`, 'Toussaint'],
+    [`${year}-11-11`, 'Armistice 1918'],
+    [`${year}-12-25`, 'Noël'],
+    [
+      toIso(addDays(easter, 1)),
+      'Lundi de Pâques',
+    ],
+    [
+      toIso(addDays(easter, 39)),
+      'Ascension',
+    ],
+    [
+      toIso(addDays(easter, 50)),
+      'Lundi de Pentecôte',
+    ],
+  ];
+
+  const map = {};
+  entries.forEach(([iso, label]) => {
+    map[iso] = label;
+  });
+
+  publicHolidaysCache[year] = map;
+  return map;
+}
+
+function getPublicHolidayLabel(iso) {
+  const year = parseInt(iso.slice(0, 4), 10);
+  return (
+    getFrenchPublicHolidaysForYear(year)[iso] ||
+    null
+  );
+}
+
+const SCHOOL_HOLIDAYS_ZONE_A = [
+  {
+    start: '2025-10-18',
+    end: '2025-11-03',
+    label: 'Vacances de la Toussaint (Zone A)',
+  },
+  {
+    start: '2025-12-20',
+    end: '2026-01-05',
+    label: 'Vacances de Noël (Zone A)',
+  },
+  {
+    start: '2026-02-14',
+    end: '2026-03-02',
+    label: "Vacances d'hiver (Zone A)",
+  },
+  {
+    start: '2026-04-11',
+    end: '2026-04-27',
+    label: 'Vacances de printemps (Zone A)',
+  },
+  {
+    start: '2026-07-04',
+    end: '2026-08-31',
+    label: "Vacances d'été",
+  },
+  {
+    start: '2026-10-17',
+    end: '2026-11-02',
+    label: 'Vacances de la Toussaint (Zone A)',
+  },
+  {
+    start: '2026-12-19',
+    end: '2027-01-04',
+    label: 'Vacances de Noël (Zone A)',
+  },
+  {
+    start: '2027-02-13',
+    end: '2027-03-01',
+    label: "Vacances d'hiver (Zone A)",
+  },
+  {
+    start: '2027-04-10',
+    end: '2027-04-26',
+    label: 'Vacances de printemps (Zone A)',
+  },
+  {
+    start: '2027-07-03',
+    end: '2027-08-31',
+    label: "Vacances d'été",
+  },
+];
+
+function getSchoolVacationLabel(iso) {
+  const found = SCHOOL_HOLIDAYS_ZONE_A.find(
+    (r) => iso >= r.start && iso <= r.end
+  );
+
+  return found ? found.label : null;
+}
+
+function getDayOffInfo(iso) {
+  const ferieLabel = getPublicHolidayLabel(iso);
+
+  if (ferieLabel) {
+    return { type: 'ferie', label: ferieLabel };
+  }
+
+  const vacLabel = getSchoolVacationLabel(iso);
+
+  if (vacLabel) {
+    return { type: 'vacances', label: vacLabel };
+  }
+
+  return null;
+}
+
 function parseTimeToMinutes(t) {
   if (!t) return null;
 
@@ -3983,10 +4145,13 @@ function CalendarView({
           const isSelected =
             cell.iso === selectedDay;
 
+          const dayOff = getDayOffInfo(cell.iso);
+
           return (
             <button
               key={cell.iso}
               className="calendar-cell"
+              title={dayOff ? dayOff.label : undefined}
               onClick={() =>
                 onSelectDay(cell.iso)
               }
@@ -3996,13 +4161,27 @@ function CalendarView({
                   : 0.35,
                 borderColor: isSelected
                   ? 'var(--pitch)'
+                  : dayOff?.type === 'ferie'
+                  ? 'var(--red)'
                   : 'var(--line)',
-                background: isToday
-                  ? 'var(--pitch-tint)'
-                  : 'var(--white)',
+                background:
+                  dayOff?.type === 'ferie'
+                    ? 'rgba(178,58,48,0.35)'
+                    : dayOff?.type === 'vacances'
+                    ? 'rgba(178,58,48,0.12)'
+                    : isToday
+                    ? 'var(--pitch-tint)'
+                    : 'var(--white)',
               }}
             >
-              <span className="text-xs font-semibold">
+              <span
+                className="text-xs font-semibold"
+                style={{
+                  color: dayOff
+                    ? 'var(--red)'
+                    : 'var(--ink)',
+                }}
+              >
                 {cell.day}
               </span>
 
@@ -4203,25 +4382,51 @@ function WeekView({
 
           const isToday = day.iso === todayISO();
 
+          const dayOff = getDayOffInfo(day.iso);
+
           return (
             <div
               key={day.iso}
+              title={dayOff ? dayOff.label : undefined}
               style={{
-                border: '1px solid var(--line)',
+                border:
+                  dayOff?.type === 'ferie'
+                    ? '1px solid var(--red)'
+                    : '1px solid var(--line)',
                 borderRadius: 10,
                 padding: 8,
                 minHeight: 140,
-                background: isToday
-                  ? 'var(--pitch-tint)'
-                  : 'var(--white)',
+                background:
+                  dayOff?.type === 'ferie'
+                    ? 'rgba(178,58,48,0.22)'
+                    : dayOff?.type === 'vacances'
+                    ? 'rgba(178,58,48,0.10)'
+                    : isToday
+                    ? 'var(--pitch-tint)'
+                    : 'var(--white)',
               }}
             >
               <div className="flex items-center justify-between">
                 <p
                   className="text-xs font-semibold"
-                  style={{ color: 'var(--ink-light)' }}
+                  style={{
+                    color: dayOff
+                      ? 'var(--red)'
+                      : 'var(--ink-light)',
+                  }}
                 >
                   {DAYS_FR[i]} {day.date.getDate()}
+                  {dayOff && (
+                    <span
+                      style={{
+                        marginLeft: 5,
+                        fontWeight: 400,
+                        color: 'var(--red)',
+                      }}
+                    >
+                      · {dayOff.label}
+                    </span>
+                  )}
                 </p>
 
                 <button
@@ -12133,6 +12338,36 @@ export default function MeleeApp() {
 
                     {selectedDay && (
                       <div className="mt-5">
+                        {(() => {
+                          const dayOff =
+                            getDayOffInfo(
+                              selectedDay
+                            );
+
+                          if (!dayOff) return null;
+
+                          return (
+                            <p
+                              className="text-sm font-semibold mb-3"
+                              style={{
+                                color: 'var(--red)',
+                                background:
+                                  dayOff.type ===
+                                  'ferie'
+                                    ? 'rgba(178,58,48,0.15)'
+                                    : 'rgba(178,58,48,0.08)',
+                                borderRadius: 8,
+                                padding: '6px 10px',
+                              }}
+                            >
+                              {dayOff.type === 'ferie'
+                                ? 'Jour férié'
+                                : 'Pas école'}{' '}
+                              · {dayOff.label}
+                            </p>
+                          );
+                        })()}
+
                         <h3 className="font-display">
                           Tâches du{' '}
                           {formatDateFR(
