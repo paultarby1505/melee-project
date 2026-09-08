@@ -693,17 +693,54 @@ function dateToISO(d) {
   )}`;
 }
 
+function timeRangesOverlap(
+  startA,
+  durationA,
+  startB,
+  durationB
+) {
+  const aStart = parseTimeToMinutes(startA);
+  const bStart = parseTimeToMinutes(startB);
+
+  if (
+    aStart == null ||
+    bStart == null ||
+    !durationA ||
+    !durationB
+  ) {
+    return true;
+  }
+
+  const aEnd = aStart + durationA;
+  const bEnd = bStart + durationB;
+
+  return aStart < bEnd && bStart < aEnd;
+}
+
 function computeAutoSessionDates({
   startIso,
   count,
-  allSessions,
+  time,
+  durationMinutes,
+  occupiedIntervals,
 }) {
   const [y, m, d] = startIso.split('-').map(Number);
   let candidate = new Date(y, m - 1, d);
 
-  const occupiedDates = new Set(
-    allSessions.map((s) => s.date)
-  );
+  const placed = [];
+
+  function hasConflict(iso) {
+    return [...occupiedIntervals, ...placed]
+      .filter((o) => o.date === iso)
+      .some((o) =>
+        timeRangesOverlap(
+          time,
+          durationMinutes,
+          o.start,
+          o.duration
+        )
+      );
+  }
 
   const results = [];
   let iterations = 0;
@@ -713,12 +750,14 @@ function computeAutoSessionDates({
 
     const iso = dateToISO(candidate);
 
-    if (
-      !getDayOffInfo(iso) &&
-      !occupiedDates.has(iso)
-    ) {
+    if (!getDayOffInfo(iso) && !hasConflict(iso)) {
       results.push(iso);
-      occupiedDates.add(iso);
+
+      placed.push({
+        date: iso,
+        start: time,
+        duration: durationMinutes,
+      });
     }
 
     candidate = new Date(
@@ -9035,10 +9074,28 @@ export default function MeleeApp() {
 
       if (remaining <= 0) return;
 
+      const occupiedIntervals = schoolSessions.map(
+        (s) => {
+          const otherCls = schoolClasses.find(
+            (c) => c.id === s.classId
+          );
+
+          return {
+            date: s.date,
+            start: s.time,
+            duration:
+              otherCls?.durationMinutes || null,
+          };
+        }
+      );
+
       const dates = computeAutoSessionDates({
         startIso,
         count: remaining,
-        allSessions: schoolSessions,
+        time: cls?.time || null,
+        durationMinutes:
+          cls?.durationMinutes || null,
+        occupiedIntervals,
       });
 
       if (dates.length === 0) {
