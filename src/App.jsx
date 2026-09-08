@@ -684,6 +684,233 @@ function getDayOffInfo(iso) {
   return null;
 }
 
+function sanitizeFileName(str) {
+  return str
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function capitalizeFirst(str) {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+function formatClassDuration(minutes) {
+  if (!minutes) return '';
+
+  if (minutes % 60 === 0) {
+    return `${minutes / 60}h00`;
+  }
+
+  const h = Math.floor(minutes / 60);
+
+  return h > 0
+    ? `${h}h${String(minutes % 60).padStart(2, '0')}`
+    : `${minutes} min`;
+}
+
+function formatClassCreneau(schoolClass) {
+  if (!schoolClass.dayOfWeek) return '';
+
+  const parts = [capitalizeFirst(schoolClass.dayOfWeek)];
+
+  if (schoolClass.time) parts.push(schoolClass.time);
+
+  const label = parts.join(' ');
+
+  return schoolClass.durationMinutes
+    ? `${label} (${formatClassDuration(
+        schoolClass.durationMinutes
+      )})`
+    : label;
+}
+
+function drawSchoolSessionsTable(
+  doc,
+  startY,
+  sessions,
+  exercises
+) {
+  const marginX = 15;
+  const pageWidth = 210;
+  const maxY = 280;
+  let y = startY;
+
+  function ensureSpace(next) {
+    if (y + next > maxY) {
+      doc.addPage();
+      y = 20;
+    }
+  }
+
+  doc.setFontSize(9);
+  doc.setFont(undefined, 'bold');
+  doc.text('N°', marginX, y);
+  doc.text('Date', marginX + 10, y);
+  doc.text('Heure', marginX + 45, y);
+  doc.text('Exercices', marginX + 65, y);
+  doc.setFont(undefined, 'normal');
+  y += 3;
+  doc.setDrawColor(150, 150, 150);
+  doc.line(marginX, y, pageWidth - marginX, y);
+  y += 5;
+
+  if (sessions.length === 0) {
+    doc.setFontSize(9);
+    doc.setTextColor(140, 140, 140);
+    doc.text(
+      'Aucune séance programmée.',
+      marginX,
+      y
+    );
+    doc.setTextColor(0, 0, 0);
+    y += 6;
+    return y;
+  }
+
+  sessions.forEach((sess, idx) => {
+    const sessExercises = exercises.filter(
+      (e) => e.sessionId === sess.id
+    );
+
+    const titles = sessExercises.length
+      ? sessExercises.map((e) => e.title).join(', ')
+      : '—';
+
+    const lines = doc.splitTextToSize(titles, 115);
+
+    ensureSpace(5 * lines.length + 2);
+
+    doc.setFontSize(9);
+    doc.text(String(idx + 1), marginX, y);
+    doc.text(formatDateFR(sess.date), marginX + 10, y);
+    doc.text(sess.time || '—', marginX + 45, y);
+    doc.text(lines, marginX + 65, y);
+
+    y += 5 * lines.length + 2;
+  });
+
+  return y;
+}
+
+function buildClassSessionsPdf(
+  school,
+  schoolClass,
+  sessions,
+  exercises
+) {
+  const doc = new jsPDF();
+  const marginX = 15;
+  let y = 20;
+
+  doc.setFontSize(17);
+  doc.text(
+    `Cycle rugby — ${schoolClass.name}`,
+    marginX,
+    y
+  );
+  y += 9;
+
+  doc.setFontSize(11);
+  doc.text(`École : ${school.name}`, marginX, y);
+  y += 6;
+
+  const infoParts = [];
+
+  if (schoolClass.headcount != null) {
+    infoParts.push(`${schoolClass.headcount} élèves`);
+  }
+
+  const creneau = formatClassCreneau(schoolClass);
+  if (creneau) infoParts.push(`Créneau : ${creneau}`);
+
+  if (infoParts.length) {
+    doc.text(infoParts.join(' · '), marginX, y);
+    y += 8;
+  } else {
+    y += 4;
+  }
+
+  drawSchoolSessionsTable(doc, y, sessions, exercises);
+
+  return doc;
+}
+
+function buildSchoolClassesPdf(
+  school,
+  classes,
+  allSessions,
+  allExercises
+) {
+  const doc = new jsPDF();
+  const marginX = 15;
+  const pageWidth = 210;
+  const maxY = 280;
+  let y = 20;
+
+  doc.setFontSize(18);
+  doc.text(`Cycles rugby — ${school.name}`, marginX, y);
+  y += 10;
+
+  const sortedClasses = [...classes].sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+
+  sortedClasses.forEach((cls, idx) => {
+    if (idx > 0) {
+      if (y + 20 > maxY) {
+        doc.addPage();
+        y = 20;
+      } else {
+        y += 4;
+        doc.setDrawColor(210, 210, 210);
+        doc.line(marginX, y, pageWidth - marginX, y);
+        y += 8;
+      }
+    }
+
+    doc.setFontSize(14);
+    doc.setFont(undefined, 'bold');
+    doc.text(cls.name, marginX, y);
+    doc.setFont(undefined, 'normal');
+    y += 6;
+
+    doc.setFontSize(10);
+    const infoParts = [];
+
+    if (cls.headcount != null) {
+      infoParts.push(`${cls.headcount} élèves`);
+    }
+
+    const creneau = formatClassCreneau(cls);
+    if (creneau) infoParts.push(`Créneau : ${creneau}`);
+
+    if (infoParts.length) {
+      doc.text(infoParts.join(' · '), marginX, y);
+      y += 7;
+    }
+
+    const classSessions = allSessions
+      .filter((s) => s.classId === cls.id)
+      .sort((a, b) =>
+        (a.date + (a.time || '')).localeCompare(
+          b.date + (b.time || '')
+        )
+      );
+
+    y = drawSchoolSessionsTable(
+      doc,
+      y,
+      classSessions,
+      allExercises
+    );
+  });
+
+  return doc;
+}
+
 function parseTimeToMinutes(t) {
   if (!t) return null;
 
@@ -2459,6 +2686,12 @@ function ClassFormModal({
     initial?.time || ''
   );
 
+  const [duration, setDuration] = useState(
+    initial?.durationMinutes
+      ? String(initial.durationMinutes)
+      : ''
+  );
+
   const [error, setError] = useState('');
 
   function submit() {
@@ -2474,6 +2707,9 @@ function ClassFormModal({
         : null,
       dayOfWeek,
       time,
+      durationMinutes: duration
+        ? parseInt(duration, 10)
+        : null,
     });
   }
 
@@ -2562,6 +2798,22 @@ function ClassFormModal({
                 }
               />
             </div>
+          </div>
+
+          <div>
+            <label>Durée du créneau</label>
+            <select
+              value={duration}
+              onChange={(e) =>
+                setDuration(e.target.value)
+              }
+            >
+              <option value="">—</option>
+              <option value="45">45 min</option>
+              <option value="60">1h00</option>
+              <option value="75">1h15</option>
+              <option value="90">1h30</option>
+            </select>
           </div>
 
           {error && (
@@ -7289,6 +7541,8 @@ export default function MeleeApp() {
             headcount: c.headcount,
             dayOfWeek: c.day_of_week || '',
             time: c.time || '',
+            durationMinutes:
+              c.duration_minutes || null,
             createdBy: c.created_by || '',
             createdAt: c.created_at,
           })
@@ -8547,6 +8801,8 @@ export default function MeleeApp() {
               headcount: data.headcount,
               day_of_week: data.dayOfWeek || null,
               time: data.time || null,
+              duration_minutes:
+                data.durationMinutes || null,
             })
             .eq('id', showClassForm.id);
 
@@ -8562,6 +8818,8 @@ export default function MeleeApp() {
               headcount: data.headcount,
               day_of_week: data.dayOfWeek || null,
               time: data.time || null,
+              duration_minutes:
+                data.durationMinutes || null,
               created_by: session.displayName,
             });
 
@@ -14478,20 +14736,48 @@ export default function MeleeApp() {
 
                   <div className="pitch-divider" />
 
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <h2 className="font-display text-lg">
                       Classes
                     </h2>
 
-                    <button
-                      className="btn-secondary"
-                      onClick={() =>
-                        setShowClassForm('new')
-                      }
-                    >
-                      <Plus size={13} />
-                      Classe
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        className="btn-secondary"
+                        disabled={
+                          selectedSchoolClasses.length ===
+                          0
+                        }
+                        onClick={() => {
+                          const doc =
+                            buildSchoolClassesPdf(
+                              selectedSchool,
+                              selectedSchoolClasses,
+                              schoolSessions,
+                              schoolExercises
+                            );
+
+                          doc.save(
+                            sanitizeFileName(
+                              `Cycles_${selectedSchool.name}`
+                            ) + '.pdf'
+                          );
+                        }}
+                      >
+                        <FileDown size={13} />
+                        Toutes les classes (PDF)
+                      </button>
+
+                      <button
+                        className="btn-secondary"
+                        onClick={() =>
+                          setShowClassForm('new')
+                        }
+                      >
+                        <Plus size={13} />
+                        Classe
+                      </button>
+                    </div>
                   </div>
 
                   {selectedSchoolClasses.length ===
@@ -14577,15 +14863,9 @@ export default function MeleeApp() {
                                         'var(--ink-light)',
                                     }}
                                   >
-                                    {cls.dayOfWeek
-                                      .charAt(0)
-                                      .toUpperCase() +
-                                      cls.dayOfWeek.slice(
-                                        1
-                                      )}
-                                    {cls.time
-                                      ? ` ${cls.time}`
-                                      : ''}
+                                    {formatClassCreneau(
+                                      cls
+                                    )}
                                   </span>
                                 )}
 
@@ -14693,15 +14973,9 @@ export default function MeleeApp() {
                                 'var(--ink-light)',
                             }}
                           >
-                            {selectedClass.dayOfWeek
-                              .charAt(0)
-                              .toUpperCase() +
-                              selectedClass.dayOfWeek.slice(
-                                1
-                              )}
-                            {selectedClass.time
-                              ? ` ${selectedClass.time}`
-                              : ''}
+                            {formatClassCreneau(
+                              selectedClass
+                            )}
                           </span>
                         )}
                       </div>
@@ -14753,15 +15027,43 @@ export default function MeleeApp() {
                       /6)
                     </h2>
 
-                    <button
-                      className="btn-secondary"
-                      onClick={() =>
-                        setShowSessionForm('new')
-                      }
-                    >
-                      <Plus size={13} />
-                      Séance
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        className="btn-secondary"
+                        disabled={
+                          selectedClassSessions.length ===
+                          0
+                        }
+                        onClick={() => {
+                          const doc =
+                            buildClassSessionsPdf(
+                              selectedSchool,
+                              selectedClass,
+                              selectedClassSessions,
+                              schoolExercises
+                            );
+
+                          doc.save(
+                            sanitizeFileName(
+                              `Cycle_${selectedSchool.name}_${selectedClass.name}`
+                            ) + '.pdf'
+                          );
+                        }}
+                      >
+                        <FileDown size={13} />
+                        PDF
+                      </button>
+
+                      <button
+                        className="btn-secondary"
+                        onClick={() =>
+                          setShowSessionForm('new')
+                        }
+                      >
+                        <Plus size={13} />
+                        Séance
+                      </button>
+                    </div>
                   </div>
 
                   {selectedClassSessions.length ===
