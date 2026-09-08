@@ -702,17 +702,12 @@ function timeRangesOverlap(
   const aStart = parseTimeToMinutes(startA);
   const bStart = parseTimeToMinutes(startB);
 
-  if (
-    aStart == null ||
-    bStart == null ||
-    !durationA ||
-    !durationB
-  ) {
+  if (aStart == null || bStart == null) {
     return true;
   }
 
-  const aEnd = aStart + durationA;
-  const bEnd = bStart + durationB;
+  const aEnd = aStart + (durationA || 60);
+  const bEnd = bStart + (durationB || 60);
 
   return aStart < bEnd && bStart < aEnd;
 }
