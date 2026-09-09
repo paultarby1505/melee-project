@@ -10529,6 +10529,13 @@ export default function MeleeApp() {
         )
     : [];
 
+  const selectedSchoolSessionCount = schoolSessions.filter(
+    (s) =>
+      selectedSchoolClasses.some(
+        (c) => c.id === s.classId
+      )
+  ).length;
+
   const selectedClass =
     selectedClassId
       ? schoolClasses.find(
@@ -14747,6 +14754,11 @@ export default function MeleeApp() {
                     classe
                     {schoolClasses.length > 1
                       ? 's'
+                      : ''}{' '}
+                    ·{' '}
+                    {schoolSessions.length} séance
+                    {schoolSessions.length > 1
+                      ? 's'
                       : ''}
                     )
                   </p>
@@ -14957,7 +14969,15 @@ export default function MeleeApp() {
                             sum + (c.headcount || 0),
                           0
                         )}{' '}
-                        élèves
+                        élèves ·{' '}
+                        {
+                          selectedSchoolSessionCount
+                        }{' '}
+                        séance
+                        {selectedSchoolSessionCount >
+                        1
+                          ? 's'
+                          : ''}
                       </p>
                     </div>
 
