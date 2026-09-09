@@ -9071,6 +9071,7 @@ export default function MeleeApp() {
         setAutoScheduleOffer({
           classId,
           startDate: dateToISO(nextWeek),
+          time: data.time || null,
         });
       }
     } catch (error) {
@@ -9084,7 +9085,8 @@ export default function MeleeApp() {
 
   async function autoScheduleRemainingSessions(
     classId,
-    startIso
+    startIso,
+    time
   ) {
     try {
       const cls = schoolClasses.find(
@@ -9111,11 +9113,14 @@ export default function MeleeApp() {
         return;
       }
 
+      const sessionTime =
+        time || cls?.time || null;
+
       const rows = dates.map((date) => ({
         id: genId(),
         class_id: classId,
         session_date: date,
-        session_time: cls?.time || null,
+        session_time: sessionTime,
         created_by: session.displayName,
       }));
 
@@ -9128,14 +9133,17 @@ export default function MeleeApp() {
 
       await loadData();
 
+      const duration =
+        cls?.durationMinutes || 60;
+
       const hasConflicts = dates.some((date) =>
         schoolSessions.some(
           (s) =>
             s.classId !== classId &&
             s.date === date &&
             timeRangesOverlap(
-              cls?.time || null,
-              cls?.durationMinutes || 60,
+              sessionTime,
+              duration,
               s.time,
               schoolClasses.find(
                 (c) => c.id === s.classId
@@ -15350,6 +15358,8 @@ export default function MeleeApp() {
                                   dateToISO(
                                     nextDate
                                   ),
+                                time:
+                                  last.time || null,
                               });
                             }}
                           >
@@ -16738,7 +16748,8 @@ export default function MeleeApp() {
 
             await autoScheduleRemainingSessions(
               offer.classId,
-              offer.startDate
+              offer.startDate,
+              offer.time
             );
           }}
           onCancel={() =>
