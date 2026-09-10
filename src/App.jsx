@@ -4597,6 +4597,7 @@ function CalendarView({
                     <span
                       key={task.id}
                       className="dot"
+                      title={task.title}
                       style={{
                         background:
                           getProjectColor(
@@ -4614,6 +4615,11 @@ function CalendarView({
                     .map((event) => (
                       <span
                         key={event.id}
+                        title={
+                          event.time
+                            ? `${event.title} · ${event.time}`
+                            : event.title
+                        }
                         style={{
                           width: 6,
                           height: 6,
@@ -4635,6 +4641,11 @@ function CalendarView({
                     .map((s) => (
                       <span
                         key={s.id}
+                        title={
+                          s.time
+                            ? `${s.schoolName} · ${s.className} · ${s.time}`
+                            : `${s.schoolName} · ${s.className}`
+                        }
                         style={{
                           width: 5,
                           height: 5,
