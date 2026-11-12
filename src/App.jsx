@@ -175,7 +175,7 @@ const NAV_ITEMS = [
   },
   { id: 'docs', label: 'Documents', icon: FileText },
   { id: 'finance', label: 'Finance', icon: Wallet },
-  { id: 'minibus', label: 'Déplacements', icon: Bus },
+  { id: 'minibus', label: "Gestion de l'entente", icon: Bus },
   {
     id: 'edr',
     label: 'EDR',
@@ -6524,6 +6524,12 @@ function MinibusTripFormModal({
   );
   const [notes, setNotes] = useState(src?.reason || '');
   const [driver, setDriver] = useState(src?.driver || '');
+  const [obCount, setObCount] = useState(
+    src?.obCount != null ? String(src.obCount) : ''
+  );
+  const [usbCount, setUsbCount] = useState(
+    src?.usbCount != null ? String(src.usbCount) : ''
+  );
   const [calcBusy, setCalcBusy] = useState(false);
   const [calcError, setCalcError] = useState('');
   const [error, setError] = useState('');
@@ -6643,6 +6649,8 @@ function MinibusTripFormModal({
       ...preview,
       reason: notes.trim(),
       driver: driver.trim(),
+      obCount: obCount === '' ? null : Math.max(0, parseInt(obCount, 10) || 0),
+      usbCount: usbCount === '' ? null : Math.max(0, parseInt(usbCount, 10) || 0),
     });
     setBusy(false);
   }
@@ -6890,6 +6898,41 @@ function MinibusTripFormModal({
             }
           />
 
+          <div>
+            <label>Nombre de personnes par équipe</label>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <span className="text-xs" style={{ color: 'var(--muted, #888)' }}>OB</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={obCount}
+                  onChange={(e) => setObCount(e.target.value.replace(/[^0-9]/g, ''))}
+                />
+              </div>
+              <div>
+                <span className="text-xs" style={{ color: 'var(--muted, #888)' }}>USB</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={usbCount}
+                  onChange={(e) => setUsbCount(e.target.value.replace(/[^0-9]/g, ''))}
+                />
+              </div>
+            </div>
+            {(obCount !== '' || usbCount !== '') && (
+              <p className="text-xs mt-1" style={{ color: 'var(--muted, #888)' }}>
+                Total : {(parseInt(obCount, 10) || 0) + (parseInt(usbCount, 10) || 0)} personne(s)
+              </p>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label>Conducteur (optionnel)</label>
@@ -6960,6 +7003,14 @@ function TripDetailModal({ trip, onEdit, onDuplicate, onDelete, onCancel }) {
       trip.wearCost != null
         ? `${formatCurrency(trip.wearCost)} (${formatPerKm(trip.wearCostPerKm)})`
         : '—',
+    ],
+    [
+      'Effectifs',
+      trip.obCount == null && trip.usbCount == null
+        ? '—'
+        : `OB : ${trip.obCount ?? 0} · USB : ${trip.usbCount ?? 0} · Total : ${
+            (trip.obCount || 0) + (trip.usbCount || 0)
+          }`,
     ],
     ['Conducteur', trip.driver || '—'],
     ['Remarques', trip.reason || '—'],
@@ -7092,11 +7143,11 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
   doc.setTextColor(...YELLOW);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(18);
-  doc.text('Récapitulatif des déplacements', titleX, 13);
+  doc.text("Gestion de l'entente", titleX, 13);
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
-  doc.text(`Période : ${periodLabel}`, titleX, 20);
+  doc.text(`Récapitulatif des déplacements · Période : ${periodLabel}`, titleX, 20);
   if (filtersLabel) doc.text(filtersLabel, titleX, 25);
   const generated = `Document généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
   doc.text(generated, W - M, 20, { align: 'right' });
@@ -7105,8 +7156,10 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
   const cols = [
     { key: 'date', label: 'Date', w: 22 },
     { key: 'cat', label: 'Catégorie', w: 24 },
-    { key: 'dest', label: 'Destination', w: 92 },
+    { key: 'dest', label: 'Destination', w: 68 },
     { key: 'veh', label: 'Véhicule', w: 24 },
+    { key: 'ob', label: 'OB', w: 12, right: true },
+    { key: 'usb', label: 'USB', w: 12, right: true },
     { key: 'km', label: 'Distance A/R', w: 27, right: true },
     { key: 'fuel', label: 'Carburant', w: 26, right: true },
     { key: 'wear', label: 'Usure', w: 24, right: true },
@@ -7136,7 +7189,7 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
 
   drawHeader();
 
-  const totals = { km: 0, fuel: 0, wear: 0, total: 0 };
+  const totals = { km: 0, fuel: 0, wear: 0, total: 0, ob: 0, usb: 0 };
 
   if (trips.length === 0) {
     doc.setFontSize(10);
@@ -7166,11 +7219,15 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
     totals.fuel += t.fuelCost || 0;
     totals.wear += t.wearCost || 0;
     totals.total += t.totalCost;
+    totals.ob += t.obCount || 0;
+    totals.usb += t.usbCount || 0;
     const values = {
       date: formatDateShortFR(t.tripDate),
       cat: t.category || '—',
       dest: destLines,
       veh: MINIBUS_LABELS[t.vehicle] || t.vehicle,
+      ob: t.obCount != null ? String(t.obCount) : '—',
+      usb: t.usbCount != null ? String(t.usbCount) : '—',
       km: pdfKm(t.kmTotal),
       fuel: t.fuelCost != null ? pdfMoney(t.fuelCost) : '—',
       wear: t.wearCost != null ? pdfMoney(t.wearCost) : '—',
@@ -7204,14 +7261,14 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
   doc.text(`TOTAL (${trips.length} déplacement${trips.length > 1 ? 's' : ''})`, x0 + 2, y + 6);
   let xt = x0;
   cols.forEach((c) => {
-    const v = { km: pdfKm(totals.km), fuel: pdfMoney(totals.fuel), wear: pdfMoney(totals.wear), total: pdfMoney(totals.total) }[c.key];
+    const v = { ob: String(totals.ob), usb: String(totals.usb), km: pdfKm(totals.km), fuel: pdfMoney(totals.fuel), wear: pdfMoney(totals.wear), total: pdfMoney(totals.total) }[c.key];
     if (v) doc.text(v, xt + c.w - 2, y + 6, { align: 'right' });
     xt += c.w;
   });
   y += 16;
 
   // Récapitulatif financier
-  const boxH = 34;
+  const boxH = 39;
   if (y + boxH > bottom) {
     doc.addPage();
     y = 14;
@@ -7227,6 +7284,7 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
   doc.text('Récapitulatif financier', x0 + 3, y + 5);
   const summary = [
     ['Nombre de déplacements', String(trips.length)],
+    ['Personnes transportées (OB / USB)', `${totals.ob + totals.usb} (${totals.ob} / ${totals.usb})`],
     ['Kilométrage total', pdfKm(totals.km)],
     ['Total carburant', pdfMoney(totals.fuel)],
     ['Total usure', pdfMoney(totals.wear)],
@@ -7250,7 +7308,7 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
-    doc.text('US Baumoise Rugby', M, H - 3.5);
+    doc.text("US Baumoise Rugby · Gestion de l'entente", M, H - 3.5);
     doc.setTextColor(...YELLOW);
     doc.text(`Saison ${seasonLabel}`, W / 2, H - 3.5, { align: 'center' });
     doc.setTextColor(255, 255, 255);
@@ -9778,6 +9836,8 @@ export default function MeleeApp() {
         totalCost: Number(t.total_cost) || 0,
         reason: t.reason || '',
         driver: t.driver || '',
+        obCount: t.ob_count ?? null,
+        usbCount: t.usb_count ?? null,
         tripName: t.trip_name || '',
         category: t.category || '',
         purpose: t.purpose || '',
@@ -9812,6 +9872,8 @@ export default function MeleeApp() {
       total_cost: data.totalCost,
       reason: data.reason,
       driver: data.driver,
+      ob_count: data.obCount ?? null,
+      usb_count: data.usbCount ?? null,
       trip_name: data.tripName,
       category: data.category,
       purpose: data.purpose,
@@ -9903,7 +9965,7 @@ export default function MeleeApp() {
         logo,
       });
       doc.save(
-        `deplacements-us-baumoise-${sanitizeFileName(periodLabel)}.pdf`
+        `gestion-entente-${sanitizeFileName(periodLabel)}.pdf`
       );
     } catch (error) {
       console.error(error);
@@ -17124,7 +17186,7 @@ export default function MeleeApp() {
                 <div>
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <h1 className="font-display text-2xl">
-                      Gestion des déplacements
+                      Gestion de l'entente
                     </h1>
 
                     {minibusReady && tripsView === 'suivi' && (
@@ -17334,6 +17396,8 @@ export default function MeleeApp() {
                               <th style={th}>Catégorie</th>
                               <th style={th}>Destination</th>
                               <th style={th}>Véhicule</th>
+                              <th style={{ ...th, ...num }}>OB</th>
+                              <th style={{ ...th, ...num }}>USB</th>
                               <th style={{ ...th, ...num }}>Distance A/R</th>
                               <th style={{ ...th, ...num }}>Carburant</th>
                               <th style={{ ...th, ...num }}>Usure</th>
@@ -17344,7 +17408,7 @@ export default function MeleeApp() {
                             {filteredTrips.length === 0 ? (
                               <tr>
                                 <td
-                                  colSpan={8}
+                                  colSpan={10}
                                   style={{ ...td, textAlign: 'center', color: 'var(--ink-light)', padding: 24 }}
                                 >
                                   Aucun déplacement pour ces filtres.
@@ -17394,6 +17458,12 @@ export default function MeleeApp() {
                                     {MINIBUS_LABELS[t.vehicle] || t.vehicle}
                                   </td>
                                   <td style={{ ...td, ...num }}>
+                                    {t.obCount ?? '—'}
+                                  </td>
+                                  <td style={{ ...td, ...num }}>
+                                    {t.usbCount ?? '—'}
+                                  </td>
+                                  <td style={{ ...td, ...num }}>
                                     {formatKm(t.kmTotal)}
                                   </td>
                                   <td style={{ ...td, ...num }}>
@@ -17414,6 +17484,12 @@ export default function MeleeApp() {
                               <tr style={{ background: '#1A1A1A', color: '#FFFFFF' }}>
                                 <td style={{ ...td, fontWeight: 700, borderBottom: 'none' }} colSpan={4}>
                                   Total · {stats.count} déplacement{stats.count > 1 ? 's' : ''}
+                                </td>
+                                <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>
+                                  {filteredTrips.reduce((n, t) => n + (t.obCount || 0), 0)}
+                                </td>
+                                <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>
+                                  {filteredTrips.reduce((n, t) => n + (t.usbCount || 0), 0)}
                                 </td>
                                 <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>
                                   {formatKm(stats.km)}
