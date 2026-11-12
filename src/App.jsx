@@ -175,7 +175,7 @@ const NAV_ITEMS = [
   },
   { id: 'docs', label: 'Documents', icon: FileText },
   { id: 'finance', label: 'Finance', icon: Wallet },
-  { id: 'minibus', label: 'Minibus', icon: Bus },
+  { id: 'minibus', label: 'Déplacements', icon: Bus },
   {
     id: 'edr',
     label: 'EDR',
@@ -6029,13 +6029,79 @@ function roundKm(km) {
   return Math.round(km * 10) / 10;
 }
 
-function computeMinibusTrip(kmOneWay, roundTrip, costPerKm) {
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+/*
+  Coût carburant au km = (consommation / 100) × prix du gazole
+  Coût kilométrique total = coût carburant au km + coût d'usure au km
+*/
+function computeCostPerKm(params, fuelPrice) {
+  const consumption = Number(params?.consumption) || 0;
+  const wear = Number(params?.wearCostPerKm) || 0;
+  if (fuelPrice == null) {
+    return { fuelPerKm: null, wearPerKm: wear, totalPerKm: null };
+  }
+  const fuelPerKm = (consumption / 100) * Number(fuelPrice);
+  return {
+    fuelPerKm,
+    wearPerKm: wear,
+    totalPerKm: fuelPerKm + wear,
+  };
+}
+
+function computeMinibusTrip(kmOneWay, roundTrip, params, fuelPrice) {
   const oneWay = roundKm(Math.max(0, kmOneWay || 0));
   const total = roundKm(roundTrip ? oneWay * 2 : oneWay);
-  const cost =
-    Math.round(total * Math.max(0, costPerKm || 0) * 100) / 100;
-  return { kmOneWay: oneWay, kmTotal: total, totalCost: cost };
+  const perKm = computeCostPerKm(params, fuelPrice);
+  if (perKm.fuelPerKm == null) return null;
+  const fuelCost = round2(total * perKm.fuelPerKm);
+  const wearCost = round2(total * perKm.wearPerKm);
+  return {
+    kmOneWay: oneWay,
+    kmTotal: total,
+    fuelCost,
+    wearCost,
+    totalCost: round2(fuelCost + wearCost),
+    costPerKm: Math.round(perKm.totalPerKm * 10000) / 10000,
+  };
 }
+
+function formatPerKm(amount) {
+  if (amount == null) return '—';
+  return `${Number(amount).toLocaleString('fr-FR', {
+    minimumFractionDigits: 3,
+    maximumFractionDigits: 4,
+  })} €/km`;
+}
+
+function formatFuelPrice(price) {
+  if (price == null) return '—';
+  return `${Number(price).toLocaleString('fr-FR', {
+    minimumFractionDigits: 3,
+    maximumFractionDigits: 3,
+  })} €/L`;
+}
+
+function formatDateTimeFR(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('fr-FR', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+const FUEL_SOURCE_LABELS = {
+  national: 'Prix moyen national',
+  station: 'Station de référence',
+  manual: 'Saisie manuelle',
+};
 
 function formatKm(km) {
   return `${(Number(km) || 0).toLocaleString('fr-FR', {
@@ -6159,12 +6225,14 @@ async function computeRoadDistanceKm(departure, arrival) {
 
 function MinibusTripFormModal({
   existing,
+  initial,
   vehicles,
+  fuelPrice,
   onSubmit,
   onCancel,
 }) {
   const [vehicle, setVehicle] = useState(
-    existing?.vehicle || 'recent'
+    existing?.vehicle || initial?.vehicle || 'recent'
   );
   const [tripDate, setTripDate] = useState(
     existing?.tripDate || todayISO()
@@ -6176,10 +6244,16 @@ function MinibusTripFormModal({
     existing?.arrival || ''
   );
   const [roundTrip, setRoundTrip] = useState(
-    existing ? existing.roundTrip : true
+    existing
+      ? existing.roundTrip
+      : initial?.roundTrip ?? true
   );
   const [kmOneWay, setKmOneWay] = useState(
-    existing ? String(existing.kmOneWay) : ''
+    existing
+      ? String(existing.kmOneWay)
+      : initial?.kmOneWay
+      ? String(initial.kmOneWay)
+      : ''
   );
   const [reason, setReason] = useState(
     existing?.reason || ''
@@ -6192,26 +6266,33 @@ function MinibusTripFormModal({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // Un trajet déjà saisi garde le tarif appliqué à l'époque, tant
-  // qu'on ne change pas de minibus.
-  const currentRate =
-    vehicles.find((v) => v.id === vehicle)?.costPerKm || 0;
-  const rate =
-    existing && existing.vehicle === vehicle
-      ? existing.costPerKm
-      : currentRate;
+  // Un trajet déjà enregistré garde les paramètres appliqués lors de
+  // sa saisie (prix du gazole, consommation, usure) tant qu'on ne
+  // change pas de minibus.
+  const keepOld =
+    existing &&
+    existing.vehicle === vehicle &&
+    existing.fuelPrice != null;
+  const currentVehicle = vehicles.find((v) => v.id === vehicle);
+  const params = keepOld
+    ? {
+        consumption: existing.consumption,
+        wearCostPerKm: existing.wearCostPerKm,
+      }
+    : currentVehicle;
+  const price = keepOld ? existing.fuelPrice : fuelPrice;
 
   const km = Number(String(kmOneWay).replace(',', '.'));
   const preview =
     Number.isFinite(km) && km > 0
-      ? computeMinibusTrip(km, roundTrip, rate)
+      ? computeMinibusTrip(km, roundTrip, params, price)
       : null;
 
   async function calculate() {
     if (!departure.trim() || !arrival.trim()) {
       setCalcInfo({
         ok: false,
-        text: "Indique un départ et une arrivée.",
+        text: 'Indique un départ et une arrivée.',
       });
       return;
     }
@@ -6234,6 +6315,12 @@ function MinibusTripFormModal({
   }
 
   async function submit() {
+    if (price == null) {
+      setError(
+        "Aucun prix du gazole connu : actualise le prix ou saisis-le à la main avant d'enregistrer."
+      );
+      return;
+    }
     if (!departure.trim() || !arrival.trim()) {
       setError("Le départ et l'arrivée sont obligatoires.");
       return;
@@ -6256,7 +6343,9 @@ function MinibusTripFormModal({
       departure: departure.trim(),
       arrival: arrival.trim(),
       roundTrip,
-      costPerKm: rate,
+      fuelPrice: Number(price),
+      consumption: Number(params?.consumption) || 0,
+      wearCostPerKm: Number(params?.wearCostPerKm) || 0,
       ...preview,
       reason: reason.trim(),
       driver: driver.trim(),
@@ -6279,52 +6368,22 @@ function MinibusTripFormModal({
         </button>
 
         <h3 className="font-display text-lg">
-          {existing ? 'Modifier le trajet' : 'Nouveau trajet minibus'}
+          {existing ? 'Modifier le déplacement' : 'Nouveau déplacement'}
         </h3>
 
         <div
           className="mt-4"
           style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
         >
-          <div>
-            <label>Minibus utilisé</label>
-            <div className="flex gap-2">
-              {MINIBUS_IDS.map((id) => {
-                const active = vehicle === id;
-                const v = vehicles.find((x) => x.id === id);
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    className="btn-secondary"
-                    style={{
-                      flex: 1,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      gap: 2,
-                      background: active ? 'var(--ink)' : 'var(--white)',
-                      color: active ? 'var(--white)' : 'var(--ink)',
-                    }}
-                    onClick={() => setVehicle(id)}
-                  >
-                    <span className="flex items-center gap-1">
-                      <Bus size={14} />
-                      {MINIBUS_LABELS[id]}
-                    </span>
-                    <span className="text-xs" style={{ opacity: 0.75 }}>
-                      {v
-                        ? `${formatCurrency(v.costPerKm)} / km`
-                        : 'Tarif non défini'}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <MinibusPicker
+            value={vehicle}
+            onChange={setVehicle}
+            vehicles={vehicles}
+            fuelPrice={fuelPrice}
+          />
 
           <div>
-            <label>Date du trajet</label>
+            <label>Date du déplacement</label>
             <input
               type="date"
               value={tripDate}
@@ -6351,21 +6410,10 @@ function MinibusTripFormModal({
             </div>
           </div>
 
-          <label
-            className="flex items-center gap-2 text-sm"
-            style={{ cursor: 'pointer' }}
-          >
-            <input
-              type="checkbox"
-              style={{ width: 'auto' }}
-              checked={roundTrip}
-              onChange={(e) => setRoundTrip(e.target.checked)}
-            />
-            Aller-retour
-          </label>
+          <TripTypeToggle value={roundTrip} onChange={setRoundTrip} />
 
           <div>
-            <label>Kilomètres (aller simple)</label>
+            <label>Distance aller (km)</label>
             <div className="flex gap-2">
               <input
                 type="text"
@@ -6401,24 +6449,17 @@ function MinibusTripFormModal({
             )}
           </div>
 
-          <div
-            style={{
-              border: '1px solid var(--line)',
-              borderRadius: 8,
-              padding: 12,
-            }}
-          >
-            <div className="flex justify-between text-sm">
-              <span>Distance totale</span>
-              <strong>{preview ? formatKm(preview.kmTotal) : '—'}</strong>
-            </div>
-            <div className="flex justify-between text-sm mt-1">
-              <span>Coût ({formatCurrency(rate)} / km)</span>
-              <strong>
-                {preview ? formatCurrency(preview.totalCost) : '—'}
-              </strong>
-            </div>
-          </div>
+          <TripCostBreakdown
+            preview={preview}
+            fuelPrice={price}
+            note={
+              keepOld
+                ? `Calcul d'origine conservé : gazole à ${formatFuelPrice(
+                    price
+                  )}.`
+                : null
+            }
+          />
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -6462,49 +6503,541 @@ function MinibusTripFormModal({
   );
 }
 
-function MinibusRatesForm({ vehicles, onSave }) {
-  const [rates, setRates] = useState(() =>
-    Object.fromEntries(
-      MINIBUS_IDS.map((id) => [
-        id,
-        String(vehicles.find((v) => v.id === id)?.costPerKm ?? ''),
-      ])
-    )
+function MinibusPicker({ value, onChange, vehicles, fuelPrice }) {
+  return (
+    <div>
+      <label>Minibus</label>
+      <div className="flex gap-2">
+        {MINIBUS_IDS.map((id) => {
+          const active = value === id;
+          const v = vehicles.find((x) => x.id === id);
+          const perKm = computeCostPerKm(v, fuelPrice);
+          return (
+            <button
+              key={id}
+              type="button"
+              className="btn-secondary"
+              style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 2,
+                background: active ? 'var(--ink)' : 'var(--white)',
+                color: active ? 'var(--white)' : 'var(--ink)',
+              }}
+              onClick={() => onChange(id)}
+            >
+              <span className="flex items-center gap-1">
+                <Bus size={14} />
+                {MINIBUS_LABELS[id]}
+              </span>
+              <span className="text-xs" style={{ opacity: 0.75 }}>
+                {formatPerKm(perKm.totalPerKm)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
+}
+
+function TripTypeToggle({ value, onChange }) {
+  return (
+    <div className="flex gap-2">
+      {[
+        { v: false, label: 'Aller simple' },
+        { v: true, label: 'Aller-retour' },
+      ].map((opt) => {
+        const active = value === opt.v;
+        return (
+          <button
+            key={opt.label}
+            type="button"
+            className="btn-secondary"
+            style={{
+              flex: 1,
+              background: active ? 'var(--ink)' : 'var(--white)',
+              color: active ? 'var(--white)' : 'var(--ink)',
+            }}
+            onClick={() => onChange(opt.v)}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function TripCostBreakdown({ preview, fuelPrice, note }) {
+  const rows = [
+    ['Distance totale', preview ? formatKm(preview.kmTotal) : '—'],
+    ['Coût carburant', preview ? formatCurrency(preview.fuelCost) : '—'],
+    ["Coût d'usure", preview ? formatCurrency(preview.wearCost) : '—'],
+  ];
+  return (
+    <div
+      style={{
+        border: '1px solid var(--line)',
+        borderRadius: 8,
+        padding: 12,
+      }}
+    >
+      {fuelPrice == null && (
+        <p className="text-xs mb-2" style={{ color: 'var(--red)' }}>
+          Prix du gazole inconnu : le coût ne peut pas être calculé.
+        </p>
+      )}
+      {rows.map(([label, value]) => (
+        <div key={label} className="flex justify-between text-sm mt-1">
+          <span>{label}</span>
+          <span>{value}</span>
+        </div>
+      ))}
+      <div
+        className="flex justify-between mt-2 pt-2"
+        style={{ borderTop: '1px solid var(--line)' }}
+      >
+        <strong>Coût total du déplacement</strong>
+        <strong>{preview ? formatCurrency(preview.totalCost) : '—'}</strong>
+      </div>
+      {note && (
+        <p className="text-xs mt-2" style={{ color: 'var(--ink-light)' }}>
+          {note}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function VehicleParamsModal({ vehicle, onSubmit, onCancel }) {
+  const [consumption, setConsumption] = useState(
+    String(vehicle.consumption ?? '')
+  );
+  const [wear, setWear] = useState(String(vehicle.wearCostPerKm ?? ''));
+  const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  async function save() {
-    const parsed = {};
-    for (const id of MINIBUS_IDS) {
-      const n = Number(String(rates[id]).replace(',', '.'));
-      if (!Number.isFinite(n) || n < 0) return;
-      parsed[id] = n;
+  async function submit() {
+    const c = Number(consumption.replace(',', '.'));
+    const w = Number(wear.replace(',', '.'));
+    if (!Number.isFinite(c) || c <= 0 || c > 40) {
+      setError('Consommation invalide (en L/100 km).');
+      return;
+    }
+    if (!Number.isFinite(w) || w < 0 || w > 5) {
+      setError("Coût d'usure invalide (en €/km).");
+      return;
     }
     setBusy(true);
-    await onSave(parsed);
+    await onSubmit({ consumption: c, wearCostPerKm: w });
     setBusy(false);
   }
 
   return (
-    <div className="flex items-end gap-3 flex-wrap">
-      {MINIBUS_IDS.map((id) => (
-        <div key={id}>
-          <label>Minibus {MINIBUS_LABELS[id].toLowerCase()} (€ / km)</label>
-          <input
-            type="text"
-            inputMode="decimal"
-            style={{ width: 140 }}
-            value={rates[id]}
-            onChange={(e) =>
-              setRates({ ...rates, [id]: e.target.value })
-            }
-          />
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+        <h3 className="font-display text-lg">{vehicle.name}</h3>
+        <p className="text-xs mt-1" style={{ color: 'var(--ink-light)' }}>
+          Carburant : {vehicle.fuel || 'Diesel'}
+        </p>
+        <div
+          className="mt-4"
+          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+        >
+          <div>
+            <label>Consommation moyenne (L/100 km)</label>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={consumption}
+              onChange={(e) => setConsumption(e.target.value)}
+            />
+          </div>
+          <div>
+            <label>Coût d'usure et d'entretien (€/km)</label>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={wear}
+              onChange={(e) => setWear(e.target.value)}
+            />
+          </div>
+          {error && (
+            <p className="text-xs" style={{ color: 'var(--red)' }}>
+              {error}
+            </p>
+          )}
         </div>
-      ))}
-      <button className="btn-secondary" onClick={save} disabled={busy}>
-        <Check size={14} />
-        {busy ? 'Enregistrement…' : 'Enregistrer les tarifs'}
-      </button>
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+          <button
+            className="btn-primary"
+            onClick={submit}
+            disabled={busy}
+          >
+            {busy ? 'Enregistrement…' : 'Enregistrer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FuelSourceModal({ settings, onSubmit, onCancel }) {
+  const [mode, setMode] = useState(settings?.priceMode || 'national');
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const [selected, setSelected] = useState(
+    settings?.stationId
+      ? {
+          id: settings.stationId,
+          name: settings.stationName,
+          address: settings.stationAddress,
+          cp: settings.stationCp,
+          city: settings.stationCity,
+        }
+      : null
+  );
+  const [manualPrice, setManualPrice] = useState(
+    settings?.manualPrice != null ? String(settings.manualPrice) : ''
+  );
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function runSearch(coords) {
+    setError('');
+    setSearching(true);
+    setResults(null);
+    try {
+      let args = { p_query: query.trim() || null };
+      if (coords) {
+        args = { p_lat: coords.lat, p_lon: coords.lon };
+      } else if (query.trim() && !/^\d{2,5}$/.test(query.trim())) {
+        // Ville : on cherche les stations autour de la commune.
+        const place = await geocodePlace(query.trim());
+        if (place) args = { p_lat: place.lat, p_lon: place.lon };
+      }
+      const { data, error: rpcError } = await supabase.rpc(
+        'search_fuel_stations',
+        args
+      );
+      if (rpcError) throw rpcError;
+      setResults(data || []);
+    } catch (e) {
+      console.error(e);
+      setError(
+        'Recherche impossible pour le moment (service des prix des carburants indisponible).'
+      );
+    }
+    setSearching(false);
+  }
+
+  function aroundMe() {
+    if (!navigator.geolocation) {
+      setError("La géolocalisation n'est pas disponible sur cet appareil.");
+      return;
+    }
+    setSearching(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) =>
+        runSearch({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+        }),
+      () => {
+        setSearching(false);
+        setError("Impossible d'obtenir ta position.");
+      },
+      { timeout: 10000 }
+    );
+  }
+
+  async function submit() {
+    setError('');
+    if (mode === 'station' && !selected) {
+      setError('Choisis une station dans la liste.');
+      return;
+    }
+    let price = null;
+    if (mode === 'manual') {
+      price = Number(manualPrice.replace(',', '.'));
+      if (!Number.isFinite(price) || price < 0.5 || price > 5) {
+        setError('Prix du gazole invalide (en €/L, ex. 1,789).');
+        return;
+      }
+    }
+    setBusy(true);
+    await onSubmit({ mode, station: selected, manualPrice: price });
+    setBusy(false);
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+        <h3 className="font-display text-lg">Prix du gazole utilisé</h3>
+
+        <div
+          className="mt-4"
+          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+        >
+          <div className="flex gap-2 flex-wrap">
+            {['national', 'station', 'manual'].map((m) => {
+              const active = mode === m;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  className="btn-secondary"
+                  style={{
+                    flex: 1,
+                    background: active ? 'var(--ink)' : 'var(--white)',
+                    color: active ? 'var(--white)' : 'var(--ink)',
+                  }}
+                  onClick={() => setMode(m)}
+                >
+                  {FUEL_SOURCE_LABELS[m]}
+                </button>
+              );
+            })}
+          </div>
+
+          {mode === 'national' && (
+            <p className="text-sm" style={{ color: 'var(--ink-light)' }}>
+              Moyenne de toutes les stations de France (données officielles
+              du gouvernement), actualisée chaque jour.
+            </p>
+          )}
+
+          {mode === 'manual' && (
+            <div>
+              <label>Prix du gazole (€/L)</label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={manualPrice}
+                onChange={(e) => setManualPrice(e.target.value)}
+                placeholder="Ex. 1,789"
+              />
+              <p className="text-xs mt-1" style={{ color: 'var(--ink-light)' }}>
+                Ce prix reste utilisé tant que tu ne repasses pas en
+                automatique.
+              </p>
+            </div>
+          )}
+
+          {mode === 'station' && (
+            <>
+              {selected && (
+                <div
+                  style={{
+                    border: '1px solid var(--line)',
+                    borderRadius: 8,
+                    padding: 10,
+                  }}
+                >
+                  <p className="text-xs" style={{ color: 'var(--ink-light)' }}>
+                    Station sélectionnée
+                  </p>
+                  <p className="text-sm font-medium">
+                    {selected.address}
+                  </p>
+                  <p className="text-xs">
+                    {selected.cp} {selected.city}
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <label>Rechercher par ville ou code postal</label>
+                <div className="flex gap-2">
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') runSearch();
+                    }}
+                    placeholder="Ex. Baume-les-Dames ou 25110"
+                  />
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => runSearch()}
+                    disabled={searching || !query.trim()}
+                    style={{ flexShrink: 0 }}
+                  >
+                    <Search size={14} />
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="text-xs mt-2"
+                  style={{
+                    color: 'var(--pitch)',
+                    textDecoration: 'underline',
+                  }}
+                  onClick={aroundMe}
+                  disabled={searching}
+                >
+                  Stations autour de moi
+                </button>
+              </div>
+
+              {searching && (
+                <div className="flex justify-center py-3">
+                  <Loader2 size={18} className="animate-spin" />
+                </div>
+              )}
+
+              {results && results.length === 0 && (
+                <p className="text-sm" style={{ color: 'var(--ink-light)' }}>
+                  Aucune station avec un prix du gazole trouvée.
+                </p>
+              )}
+
+              {results && results.length > 0 && (
+                <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+                  {results.map((st) => {
+                    const active = selected?.id === st.id;
+                    return (
+                      <button
+                        key={st.id}
+                        type="button"
+                        className="w-full text-left flex items-center gap-3 py-2 px-2"
+                        style={{
+                          borderBottom: '1px solid var(--line)',
+                          background: active
+                            ? 'var(--red-tint)'
+                            : 'transparent',
+                          borderRadius: 6,
+                        }}
+                        onClick={() =>
+                          setSelected({
+                            ...st,
+                            name: `Station ${st.city || ''}`.trim(),
+                          })
+                        }
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {st.address}
+                          </p>
+                          <p
+                            className="text-xs"
+                            style={{ color: 'var(--ink-light)' }}
+                          >
+                            {st.cp} {st.city} · maj{' '}
+                            {formatDateTimeFR(st.price_date)}
+                          </p>
+                        </div>
+                        <strong className="text-sm">
+                          {formatFuelPrice(st.price)}
+                        </strong>
+                        {active && <Check size={14} />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+
+          {error && (
+            <p className="text-xs" style={{ color: 'var(--red)' }}>
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+          <button
+            className="btn-primary"
+            onClick={submit}
+            disabled={busy}
+          >
+            {busy ? 'Enregistrement…' : 'Valider'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TripCalculator({ vehicles, fuelPrice, onSave }) {
+  const [vehicle, setVehicle] = useState('recent');
+  const [km, setKm] = useState('');
+  const [roundTrip, setRoundTrip] = useState(true);
+
+  const v = vehicles.find((x) => x.id === vehicle);
+  const n = Number(String(km).replace(',', '.'));
+  const preview =
+    Number.isFinite(n) && n > 0
+      ? computeMinibusTrip(n, roundTrip, v, fuelPrice)
+      : null;
+
+  return (
+    <div
+      className="stat-card"
+      style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+    >
+      <MinibusPicker
+        value={vehicle}
+        onChange={setVehicle}
+        vehicles={vehicles}
+        fuelPrice={fuelPrice}
+      />
+      <div>
+        <label>Distance aller (km)</label>
+        <input
+          type="text"
+          inputMode="decimal"
+          value={km}
+          onChange={(e) => setKm(e.target.value)}
+          placeholder="Ex. 100"
+        />
+      </div>
+      <TripTypeToggle value={roundTrip} onChange={setRoundTrip} />
+      <TripCostBreakdown preview={preview} fuelPrice={fuelPrice} />
+      <div className="flex justify-end">
+        <button
+          className="btn-primary"
+          disabled={!preview}
+          onClick={() =>
+            onSave({ vehicle, kmOneWay: n, roundTrip })
+          }
+        >
+          <Plus size={14} />
+          Enregistrer ce déplacement
+        </button>
+      </div>
     </div>
   );
 }
@@ -7659,6 +8192,24 @@ export default function MeleeApp() {
   const [minibusMonthFilter, setMinibusMonthFilter] =
     useState('all');
 
+  const [fuelSettings, setFuelSettings] = useState(null);
+
+  const [fuelReady, setFuelReady] = useState(true);
+
+  const [fuelHistory, setFuelHistory] = useState([]);
+
+  const [fuelRefreshing, setFuelRefreshing] =
+    useState(false);
+
+  const [showFuelSource, setShowFuelSource] =
+    useState(false);
+
+  const [editingVehicle, setEditingVehicle] =
+    useState(null);
+
+  const [minibusHistoryTab, setMinibusHistoryTab] =
+    useState('trips');
+
   const [openNavMenu, setOpenNavMenu] = useState(
     null
   );
@@ -8339,7 +8890,7 @@ export default function MeleeApp() {
   // Chargé à part : si les tables minibus n'existent pas encore,
   // le reste de l'application continue de fonctionner.
   async function loadMinibus() {
-    const [tripsResult, vehiclesResult] =
+    const [tripsResult, vehiclesResult, fuelResult, historyResult] =
       await Promise.all([
         supabase
           .from('minibus_trips')
@@ -8347,6 +8898,16 @@ export default function MeleeApp() {
           .order('trip_date', { ascending: false })
           .order('created_at', { ascending: false }),
         supabase.from('minibus_vehicles').select('*'),
+        supabase
+          .from('fuel_settings')
+          .select('*')
+          .eq('id', 1)
+          .maybeSingle(),
+        supabase
+          .from('fuel_history')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(200),
       ]);
 
     if (tripsResult.error || vehiclesResult.error) {
@@ -8358,14 +8919,60 @@ export default function MeleeApp() {
     }
 
     setMinibusReady(true);
+    setFuelReady(!fuelResult.error && !!fuelResult.data);
 
     setMinibusVehicles(
-      (vehiclesResult.data || []).map((v) => ({
-        id: v.id,
-        name: v.name,
-        costPerKm: Number(v.cost_per_km) || 0,
+      (vehiclesResult.data || [])
+        .map((v) => ({
+          id: v.id,
+          name: v.name,
+          fuel: v.fuel || 'Diesel',
+          consumption: Number(v.consumption_l_100) || 0,
+          wearCostPerKm: Number(v.wear_cost_per_km) || 0,
+        }))
+        .sort(
+          (a, b) =>
+            MINIBUS_IDS.indexOf(a.id) - MINIBUS_IDS.indexOf(b.id)
+        )
+    );
+
+    const f = fuelResult.data;
+    setFuelSettings(
+      f
+        ? {
+            priceMode: f.price_mode,
+            stationId: f.station_id,
+            stationName: f.station_name,
+            stationAddress: f.station_address,
+            stationCp: f.station_cp,
+            stationCity: f.station_city,
+            manualPrice:
+              f.manual_price != null ? Number(f.manual_price) : null,
+            currentPrice:
+              f.current_price != null ? Number(f.current_price) : null,
+            priceSource: f.price_source,
+            priceDate: f.price_date,
+            lastRefreshAt: f.last_refresh_at,
+            lastRefreshOk: f.last_refresh_ok,
+            lastRefreshError: f.last_refresh_error,
+          }
+        : null
+    );
+
+    setFuelHistory(
+      (historyResult.data || []).map((h) => ({
+        id: h.id,
+        createdAt: h.created_at,
+        kind: h.kind,
+        price: h.price != null ? Number(h.price) : null,
+        source: h.source,
+        stationName: h.station_name,
+        details: h.details || '',
+        createdBy: h.created_by || '',
       }))
     );
+
+    const num = (x) => (x != null ? Number(x) : null);
 
     setMinibusTrips(
       (tripsResult.data || []).map((t) => ({
@@ -8378,6 +8985,11 @@ export default function MeleeApp() {
         kmOneWay: Number(t.km_one_way) || 0,
         kmTotal: Number(t.km_total) || 0,
         costPerKm: Number(t.cost_per_km) || 0,
+        fuelPrice: num(t.fuel_price),
+        consumption: num(t.consumption_l_100),
+        wearCostPerKm: num(t.wear_cost_per_km),
+        fuelCost: num(t.fuel_cost),
+        wearCost: num(t.wear_cost),
         totalCost: Number(t.total_cost) || 0,
         reason: t.reason || '',
         driver: t.driver || '',
@@ -8396,6 +9008,11 @@ export default function MeleeApp() {
       round_trip: data.roundTrip,
       km_one_way: data.kmOneWay,
       km_total: data.kmTotal,
+      fuel_price: data.fuelPrice,
+      consumption_l_100: data.consumption,
+      wear_cost_per_km: data.wearCostPerKm,
+      fuel_cost: data.fuelCost,
+      wear_cost: data.wearCost,
       cost_per_km: data.costPerKm,
       total_cost: data.totalCost,
       reason: data.reason,
@@ -8417,10 +9034,10 @@ export default function MeleeApp() {
 
       await loadMinibus();
       setShowMinibusForm(null);
-      showToast('Trajet enregistré.');
+      showToast('Déplacement enregistré.');
     } catch (error) {
       console.error(error);
-      showToast("Impossible d'enregistrer le trajet.");
+      showToast("Impossible d'enregistrer le déplacement.");
     }
   }
 
@@ -8435,10 +9052,10 @@ export default function MeleeApp() {
 
       await loadMinibus();
       setShowMinibusForm(null);
-      showToast('Trajet mis à jour.');
+      showToast('Déplacement mis à jour.');
     } catch (error) {
       console.error(error);
-      showToast('Impossible de modifier le trajet.');
+      showToast('Impossible de modifier le déplacement.');
     }
   }
 
@@ -8452,34 +9069,142 @@ export default function MeleeApp() {
       if (error) throw error;
 
       await loadMinibus();
-      showToast('Trajet supprimé.');
+      showToast('Déplacement supprimé.');
     } catch (error) {
       console.error(error);
-      showToast('Impossible de supprimer le trajet.');
+      showToast('Impossible de supprimer le déplacement.');
     }
   }
 
-  async function saveMinibusRates(rates) {
+  async function saveVehicleParams(id, params) {
     try {
-      for (const id of MINIBUS_IDS) {
-        const { error } = await supabase
-          .from('minibus_vehicles')
-          .update({
-            cost_per_km: rates[id],
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', id);
+      const { error } = await supabase
+        .from('minibus_vehicles')
+        .update({
+          consumption_l_100: params.consumption,
+          wear_cost_per_km: params.wearCostPerKm,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id);
 
-        if (error) throw error;
-      }
+      if (error) throw error;
 
       await loadMinibus();
-      showToast('Tarifs enregistrés.');
+      setEditingVehicle(null);
+      showToast('Paramètres du minibus enregistrés.');
     } catch (error) {
       console.error(error);
-      showToast("Impossible d'enregistrer les tarifs.");
+      showToast("Impossible d'enregistrer les paramètres.");
     }
   }
+
+  async function refreshFuelPrice({ silent } = {}) {
+    setFuelRefreshing(true);
+    try {
+      const { data, error } = await supabase.rpc(
+        'refresh_fuel_price'
+      );
+      if (error) throw error;
+      await loadMinibus();
+      if (!silent) {
+        showToast(
+          data?.ok
+            ? `Prix du gazole actualisé : ${formatFuelPrice(data.price)}.`
+            : 'Actualisation impossible : dernier prix connu conservé.'
+        );
+      }
+    } catch (error) {
+      console.error(error);
+      if (!silent) {
+        showToast(
+          'Actualisation impossible : dernier prix connu conservé.'
+        );
+      }
+    }
+    setFuelRefreshing(false);
+  }
+
+  async function saveFuelSource({ mode, station, manualPrice }) {
+    try {
+      const prev = fuelSettings || {};
+      const updates = {
+        price_mode: mode,
+        updated_at: new Date().toISOString(),
+      };
+      if (mode === 'station' && station) {
+        Object.assign(updates, {
+          station_id: station.id,
+          station_name: station.name || `Station ${station.city || ''}`.trim(),
+          station_address: station.address || '',
+          station_cp: station.cp || '',
+          station_city: station.city || '',
+        });
+      }
+      if (mode === 'manual') {
+        updates.manual_price = manualPrice;
+      }
+
+      const { error } = await supabase
+        .from('fuel_settings')
+        .update(updates)
+        .eq('id', 1);
+      if (error) throw error;
+
+      const events = [];
+      if (mode === 'station' && station && station.id !== prev.stationId) {
+        events.push({
+          kind: 'station',
+          station_id: station.id,
+          station_name: updates.station_name,
+          details: `${station.address || ''}, ${station.cp || ''} ${
+            station.city || ''
+          }`.trim(),
+        });
+      }
+      if (mode === 'manual') {
+        events.push({
+          kind: 'manual',
+          price: manualPrice,
+          source: 'manual',
+          details: 'Prix saisi à la main',
+        });
+      } else if (mode !== prev.priceMode) {
+        events.push({
+          kind: 'mode',
+          source: mode,
+          details: `Source du prix : ${FUEL_SOURCE_LABELS[mode]}`,
+        });
+      }
+      if (events.length) {
+        await supabase.from('fuel_history').insert(
+          events.map((e) => ({
+            ...e,
+            created_by: session.displayName,
+          }))
+        );
+      }
+
+      setShowFuelSource(false);
+      await refreshFuelPrice({ silent: true });
+      showToast('Source du prix du gazole enregistrée.');
+    } catch (error) {
+      console.error(error);
+      showToast("Impossible d'enregistrer la source du prix.");
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab !== 'minibus' || !fuelSettings) return;
+    if (fuelSettings.priceMode === 'manual') return;
+    const last = fuelSettings.lastRefreshAt
+      ? new Date(fuelSettings.lastRefreshAt).getTime()
+      : 0;
+    // Secours si la tâche quotidienne n'a pas tourné.
+    if (Date.now() - last > 24 * 3600000 && !fuelRefreshing) {
+      refreshFuelPrice({ silent: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, fuelSettings?.lastRefreshAt]);
 
   /* =====================================================
      SESSION
@@ -15387,23 +16112,32 @@ export default function MeleeApp() {
               </div>
             )}
 
-            {/* MINIBUS */}
+            {/* GESTION DES DÉPLACEMENTS */}
 
             {activeTab === 'minibus' && (() => {
+              const fuelPrice = fuelSettings?.currentPrice ?? null;
+              const isAdmin = session.role === 'admin';
+              const refreshAgeH = fuelSettings?.lastRefreshAt
+                ? (Date.now() -
+                    new Date(fuelSettings.lastRefreshAt).getTime()) /
+                  3600000
+                : null;
+              const priceStale =
+                fuelSettings?.priceMode !== 'manual' &&
+                (fuelSettings?.lastRefreshOk === false ||
+                  refreshAgeH == null ||
+                  refreshAgeH > 30);
+
               const months = [
                 ...new Set(
-                  minibusTrips.map((t) =>
-                    t.tripDate.slice(0, 7)
-                  )
+                  minibusTrips.map((t) => t.tripDate.slice(0, 7))
                 ),
               ];
               const visibleTrips =
                 minibusMonthFilter === 'all'
                   ? minibusTrips
                   : minibusTrips.filter((t) =>
-                      t.tripDate.startsWith(
-                        minibusMonthFilter
-                      )
+                      t.tripDate.startsWith(minibusMonthFilter)
                     );
               const totals = MINIBUS_IDS.map((id) => {
                 const rows = visibleTrips.filter(
@@ -15417,24 +16151,48 @@ export default function MeleeApp() {
                 };
               });
               const totalKm = totals.reduce((s, t) => s + t.km, 0);
-              const totalCost = totals.reduce((s, t) => s + t.cost, 0);
+              const totalCost = totals.reduce(
+                (s, t) => s + t.cost,
+                0
+              );
+
+              const sourceLabel =
+                fuelSettings?.priceMode === 'station'
+                  ? fuelSettings.stationName || 'Station de référence'
+                  : FUEL_SOURCE_LABELS[
+                      fuelSettings?.priceMode || 'national'
+                    ];
+
+              const historyLabel = (h) => {
+                if (h.kind === 'price')
+                  return `Nouveau prix : ${formatFuelPrice(h.price)} (${
+                    h.source === 'station'
+                      ? h.stationName || 'station'
+                      : FUEL_SOURCE_LABELS[h.source] || h.source
+                  })`;
+                if (h.kind === 'manual')
+                  return `Prix saisi à la main : ${formatFuelPrice(
+                    h.price
+                  )}`;
+                if (h.kind === 'station')
+                  return `Nouvelle station de référence : ${h.details}`;
+                return h.details;
+              };
 
               return (
                 <div>
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <h1 className="font-display text-2xl">
-                      Minibus
+                      Gestion des déplacements
                     </h1>
 
                     {minibusReady && (
                       <button
                         className="btn-primary"
-                        onClick={() =>
-                          setShowMinibusForm({})
-                        }
+                        onClick={() => setShowMinibusForm({})}
                       >
                         <Plus size={14} />
-                        Trajet
+                        Déplacement
                       </button>
                     )}
                   </div>
@@ -15446,194 +16204,472 @@ export default function MeleeApp() {
                       className="text-sm"
                       style={{ color: 'var(--red)' }}
                     >
-                      Les tables du minibus ne sont pas encore
-                      créées dans Supabase (fichier
-                      supabase/minibus.sql).
+                      Les tables du minibus ne sont pas encore créées
+                      dans Supabase.
                     </p>
                   ) : (
                     <>
-                      {months.length > 0 && (
-                        <div className="mb-4">
-                          <label>Période</label>
-                          <select
-                            style={{ width: 'auto' }}
-                            value={minibusMonthFilter}
-                            onChange={(e) =>
-                              setMinibusMonthFilter(
-                                e.target.value
-                              )
-                            }
-                          >
-                            <option value="all">
-                              Tous les trajets
-                            </option>
-                            {months.map((m) => {
-                              const [y, mo] = m.split('-');
-                              return (
-                                <option key={m} value={m}>
-                                  {capitalizeFirst(
-                                    MONTHS_FR[Number(mo) - 1]
-                                  )}{' '}
-                                  {y}
-                                </option>
-                              );
-                            })}
-                          </select>
-                        </div>
-                      )}
+                      {/* PRIX DU CARBURANT */}
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {totals.map((t) => (
-                          <StatCard
-                            key={t.id}
-                            icon={Bus}
-                            label={`${MINIBUS_LABELS[t.id]} · ${t.count} trajet${
-                              t.count > 1 ? 's' : ''
-                            } · ${formatKm(t.km)}`}
-                            value={formatCurrency(t.cost)}
-                          />
-                        ))}
-                        <StatCard
-                          icon={Wallet}
-                          label={`Total · ${visibleTrips.length} trajet${
-                            visibleTrips.length > 1 ? 's' : ''
-                          } · ${formatKm(totalKm)}`}
-                          value={formatCurrency(totalCost)}
-                        />
+                      <div className="stat-card">
+                        {!fuelReady ? (
+                          <p
+                            className="text-sm"
+                            style={{ color: 'var(--red)' }}
+                          >
+                            Le suivi du prix du gazole n'est pas encore
+                            installé dans Supabase (fichier
+                            supabase/deplacements.sql).
+                          </p>
+                        ) : (
+                          <>
+                            <div className="flex items-start justify-between flex-wrap gap-3">
+                              <div>
+                                <span
+                                  className="text-xs font-semibold uppercase"
+                                  style={{
+                                    color: 'var(--ink-light)',
+                                    letterSpacing: '0.03em',
+                                  }}
+                                >
+                                  Prix du gazole
+                                </span>
+                                <p
+                                  className="score mt-1"
+                                  style={{ fontSize: '30px' }}
+                                >
+                                  {formatFuelPrice(fuelPrice)}
+                                </p>
+                                <p className="text-sm font-medium">
+                                  {sourceLabel}
+                                </p>
+                                {fuelSettings?.priceMode ===
+                                  'station' && (
+                                  <p
+                                    className="text-xs"
+                                    style={{
+                                      color: 'var(--ink-light)',
+                                    }}
+                                  >
+                                    {fuelSettings.stationAddress},{' '}
+                                    {fuelSettings.stationCp}{' '}
+                                    {fuelSettings.stationCity}
+                                  </p>
+                                )}
+                                <p
+                                  className="text-xs mt-1"
+                                  style={{
+                                    color: 'var(--ink-light)',
+                                  }}
+                                >
+                                  Tarif du{' '}
+                                  {formatDateTimeFR(
+                                    fuelSettings?.priceDate &&
+                                      fuelSettings?.lastRefreshAt &&
+                                      new Date(fuelSettings.priceDate) >
+                                        new Date(
+                                          fuelSettings.lastRefreshAt
+                                        )
+                                      ? fuelSettings.lastRefreshAt
+                                      : fuelSettings?.priceDate
+                                  )}{' '}
+                                  · Dernière actualisation :{' '}
+                                  {formatDateTimeFR(
+                                    fuelSettings?.lastRefreshAt
+                                  )}
+                                </p>
+                              </div>
+
+                              <div className="flex gap-2 flex-wrap">
+                                <button
+                                  className="btn-secondary"
+                                  onClick={() => refreshFuelPrice()}
+                                  disabled={fuelRefreshing}
+                                >
+                                  {fuelRefreshing ? (
+                                    <Loader2
+                                      size={14}
+                                      className="animate-spin"
+                                    />
+                                  ) : (
+                                    <RefreshCw size={14} />
+                                  )}
+                                  Actualiser les prix
+                                </button>
+                                <button
+                                  className="btn-secondary"
+                                  onClick={() =>
+                                    setShowFuelSource(true)
+                                  }
+                                >
+                                  <Search size={14} />
+                                  Changer de station
+                                </button>
+                              </div>
+                            </div>
+
+                            {fuelPrice == null && (
+                              <p
+                                className="text-xs mt-3 flex items-center gap-1"
+                                style={{ color: 'var(--red)' }}
+                              >
+                                <AlertTriangle size={12} />
+                                Aucun prix du gazole connu pour le
+                                moment. Actualise ou saisis un prix à
+                                la main (« Changer de station »).
+                              </p>
+                            )}
+
+                            {fuelPrice != null && priceStale && (
+                              <p
+                                className="text-xs mt-3 flex items-center gap-1"
+                                style={{ color: 'var(--red)' }}
+                              >
+                                <AlertTriangle size={12} />
+                                Prix non actualisé : la dernière
+                                récupération a échoué
+                                {fuelSettings?.lastRefreshError
+                                  ? ` (${fuelSettings.lastRefreshError})`
+                                  : ''}
+                                . Le dernier prix connu est utilisé.
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* CARTES DES VÉHICULES */}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                        {minibusVehicles.map((v) => {
+                          const perKm = computeCostPerKm(v, fuelPrice);
+                          return (
+                            <div key={v.id} className="stat-card">
+                              <div className="flex items-center justify-between">
+                                <span className="font-display text-lg flex items-center gap-2">
+                                  <Bus size={16} />
+                                  {v.name}
+                                </span>
+                                {isAdmin && (
+                                  <button
+                                    className="icon-btn"
+                                    title="Modifier la consommation et l'usure"
+                                    onClick={() =>
+                                      setEditingVehicle(v)
+                                    }
+                                  >
+                                    <Pencil size={14} />
+                                  </button>
+                                )}
+                              </div>
+                              {[
+                                [
+                                  'Consommation',
+                                  `${v.consumption.toLocaleString(
+                                    'fr-FR'
+                                  )} L/100 km · ${v.fuel}`,
+                                ],
+                                [
+                                  'Prix du gazole',
+                                  formatFuelPrice(fuelPrice),
+                                ],
+                                [
+                                  'Carburant',
+                                  formatPerKm(perKm.fuelPerKm),
+                                ],
+                                [
+                                  'Usure et entretien',
+                                  formatPerKm(perKm.wearPerKm),
+                                ],
+                              ].map(([label, value]) => (
+                                <div
+                                  key={label}
+                                  className="flex justify-between text-sm mt-1"
+                                >
+                                  <span
+                                    style={{
+                                      color: 'var(--ink-light)',
+                                    }}
+                                  >
+                                    {label}
+                                  </span>
+                                  <span>{value}</span>
+                                </div>
+                              ))}
+                              <div
+                                className="flex justify-between mt-2 pt-2"
+                                style={{
+                                  borderTop: '1px solid var(--line)',
+                                }}
+                              >
+                                <strong>Coût total</strong>
+                                <strong>
+                                  {formatPerKm(perKm.totalPerKm)}
+                                </strong>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
 
                       <div className="pitch-divider" />
 
-                      <h2 className="font-display text-lg">
-                        Trajets
+                      {/* CALCULATEUR */}
+
+                      <h2 className="font-display text-lg mb-2">
+                        Calculateur de déplacement
                       </h2>
 
-                      {visibleTrips.length === 0 ? (
-                        <p
-                          className="text-sm"
-                          style={{
-                            color: 'var(--ink-light)',
-                          }}
-                        >
-                          Aucun trajet pour l'instant.
-                        </p>
-                      ) : (
-                        visibleTrips.map((trip) => (
-                          <div
-                            key={trip.id}
-                            className="flex items-center gap-3 py-2"
-                            style={{
-                              borderBottom:
-                                '1px solid var(--line)',
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: 34,
-                                height: 34,
-                                borderRadius: 8,
-                                background: 'var(--red-tint)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                flexShrink: 0,
-                              }}
-                            >
-                              <Bus size={16} />
-                            </div>
+                      <TripCalculator
+                        vehicles={minibusVehicles}
+                        fuelPrice={fuelPrice}
+                        onSave={(initial) =>
+                          setShowMinibusForm({ initial })
+                        }
+                      />
 
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium truncate">
-                                {trip.departure}{' '}
-                                {trip.roundTrip ? '⇄' : '→'}{' '}
-                                {trip.arrival}
-                              </p>
+                      <div className="pitch-divider" />
+
+                      {/* HISTORIQUE */}
+
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <h2 className="font-display text-lg">
+                          Historique
+                        </h2>
+                        <div className="flex gap-2">
+                          {[
+                            ['trips', 'Déplacements'],
+                            ['prices', 'Prix et stations'],
+                          ].map(([id, label]) => (
+                            <button
+                              key={id}
+                              className="btn-secondary"
+                              style={{
+                                background:
+                                  minibusHistoryTab === id
+                                    ? 'var(--ink)'
+                                    : 'var(--white)',
+                                color:
+                                  minibusHistoryTab === id
+                                    ? 'var(--white)'
+                                    : 'var(--ink)',
+                              }}
+                              onClick={() =>
+                                setMinibusHistoryTab(id)
+                              }
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {minibusHistoryTab === 'prices' ? (
+                        <div className="mt-3">
+                          {fuelHistory.length === 0 ? (
+                            <p
+                              className="text-sm"
+                              style={{ color: 'var(--ink-light)' }}
+                            >
+                              Aucun historique pour l'instant.
+                            </p>
+                          ) : (
+                            fuelHistory.map((h) => (
+                              <div
+                                key={h.id}
+                                className="flex items-center justify-between gap-3 py-2"
+                                style={{
+                                  borderBottom:
+                                    '1px solid var(--line)',
+                                }}
+                              >
+                                <div className="min-w-0">
+                                  <p className="text-sm">
+                                    {historyLabel(h)}
+                                  </p>
+                                  <p
+                                    className="text-xs"
+                                    style={{
+                                      color: 'var(--ink-light)',
+                                    }}
+                                  >
+                                    {formatDateTimeFR(h.createdAt)}
+                                    {h.createdBy
+                                      ? ` · ${h.createdBy}`
+                                      : ' · automatique'}
+                                    {h.kind === 'price' && h.details
+                                      ? ` · ${h.details}`
+                                      : ''}
+                                  </p>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          {months.length > 0 && (
+                            <div className="mt-3 mb-3">
+                              <label>Période</label>
+                              <select
+                                style={{ width: 'auto' }}
+                                value={minibusMonthFilter}
+                                onChange={(e) =>
+                                  setMinibusMonthFilter(
+                                    e.target.value
+                                  )
+                                }
+                              >
+                                <option value="all">
+                                  Toute la période
+                                </option>
+                                {months.map((m) => {
+                                  const [y, mo] = m.split('-');
+                                  return (
+                                    <option key={m} value={m}>
+                                      {capitalizeFirst(
+                                        MONTHS_FR[Number(mo) - 1]
+                                      )}{' '}
+                                      {y}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+                            {totals.map((t) => (
+                              <StatCard
+                                key={t.id}
+                                icon={Bus}
+                                label={`${MINIBUS_LABELS[t.id]} · ${
+                                  t.count
+                                } · ${formatKm(t.km)}`}
+                                value={formatCurrency(t.cost)}
+                              />
+                            ))}
+                            <StatCard
+                              icon={Wallet}
+                              label={`Total · ${
+                                visibleTrips.length
+                              } · ${formatKm(totalKm)}`}
+                              value={formatCurrency(totalCost)}
+                            />
+                          </div>
+
+                          <div className="mt-3">
+                            {visibleTrips.length === 0 ? (
                               <p
-                                className="text-xs mt-1"
+                                className="text-sm"
                                 style={{
                                   color: 'var(--ink-light)',
                                 }}
                               >
-                                {formatDateFR(trip.tripDate)} ·
-                                Minibus{' '}
-                                {MINIBUS_LABELS[
-                                  trip.vehicle
-                                ]?.toLowerCase()}{' '}
-                                ·{' '}
-                                {trip.roundTrip
-                                  ? 'aller-retour'
-                                  : 'aller simple'}{' '}
-                                · {formatKm(trip.kmTotal)} ×{' '}
-                                {formatCurrency(trip.costPerKm)}
-                                {trip.reason
-                                  ? ` · ${trip.reason}`
-                                  : ''}
-                                {trip.driver
-                                  ? ` · ${trip.driver}`
-                                  : ''}
+                                Aucun déplacement pour l'instant.
                               </p>
-                            </div>
+                            ) : (
+                              visibleTrips.map((trip) => (
+                                <div
+                                  key={trip.id}
+                                  className="flex items-center gap-3 py-2"
+                                  style={{
+                                    borderBottom:
+                                      '1px solid var(--line)',
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      width: 34,
+                                      height: 34,
+                                      borderRadius: 8,
+                                      background: 'var(--red-tint)',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    <Bus size={16} />
+                                  </div>
 
-                            <strong className="text-sm">
-                              {formatCurrency(trip.totalCost)}
-                            </strong>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium truncate">
+                                      {trip.departure}{' '}
+                                      {trip.roundTrip ? '⇄' : '→'}{' '}
+                                      {trip.arrival}
+                                    </p>
+                                    <p
+                                      className="text-xs mt-1"
+                                      style={{
+                                        color: 'var(--ink-light)',
+                                      }}
+                                    >
+                                      {formatDateFR(trip.tripDate)}{' '}
+                                      {trip.tripDate.slice(0, 4)} ·{' '}
+                                      {MINIBUS_LABELS[trip.vehicle]} ·{' '}
+                                      {formatKm(trip.kmTotal)}
+                                      {trip.roundTrip
+                                        ? ' (A/R)'
+                                        : ''}
+                                      {trip.fuelCost != null
+                                        ? ` · carburant ${formatCurrency(
+                                            trip.fuelCost
+                                          )} + usure ${formatCurrency(
+                                            trip.wearCost
+                                          )}`
+                                        : ''}
+                                      {trip.fuelPrice != null
+                                        ? ` · gazole ${formatFuelPrice(
+                                            trip.fuelPrice
+                                          )}`
+                                        : ''}
+                                      {trip.reason
+                                        ? ` · ${trip.reason}`
+                                        : ''}
+                                      {trip.driver
+                                        ? ` · ${trip.driver}`
+                                        : ''}
+                                    </p>
+                                  </div>
 
-                            <button
-                              className="icon-btn"
-                              onClick={() =>
-                                setShowMinibusForm({
-                                  existing: trip,
-                                })
-                              }
-                            >
-                              <Pencil size={14} />
-                            </button>
+                                  <strong className="text-sm">
+                                    {formatCurrency(trip.totalCost)}
+                                  </strong>
 
-                            <button
-                              className="icon-btn"
-                              onClick={() =>
-                                setConfirmState({
-                                  message:
-                                    'Supprimer ce trajet ?',
-                                  onConfirm: async () => {
-                                    await deleteMinibusTrip(
-                                      trip.id
-                                    );
-                                    setConfirmState(null);
-                                  },
-                                })
-                              }
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                                  <button
+                                    className="icon-btn"
+                                    onClick={() =>
+                                      setShowMinibusForm({
+                                        existing: trip,
+                                      })
+                                    }
+                                  >
+                                    <Pencil size={14} />
+                                  </button>
+
+                                  <button
+                                    className="icon-btn"
+                                    onClick={() =>
+                                      setConfirmState({
+                                        message:
+                                          'Supprimer ce déplacement ?',
+                                        onConfirm: async () => {
+                                          await deleteMinibusTrip(
+                                            trip.id
+                                          );
+                                          setConfirmState(null);
+                                        },
+                                      })
+                                    }
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              ))
+                            )}
                           </div>
-                        ))
-                      )}
-
-                      <div className="pitch-divider" />
-
-                      <h2 className="font-display text-lg">
-                        Tarif au kilomètre
-                      </h2>
-                      <p
-                        className="text-xs mb-2"
-                        style={{
-                          color: 'var(--ink-light)',
-                        }}
-                      >
-                        Utilisé pour les nouveaux trajets. Les
-                        trajets déjà enregistrés gardent leur
-                        tarif.
-                      </p>
-
-                      {minibusVehicles.length > 0 && (
-                        <MinibusRatesForm
-                          key={minibusVehicles
-                            .map((v) => v.costPerKm)
-                            .join('-')}
-                          vehicles={minibusVehicles}
-                          onSave={saveMinibusRates}
-                        />
+                        </>
                       )}
                     </>
                   )}
@@ -17923,7 +18959,9 @@ export default function MeleeApp() {
       {showMinibusForm && (
         <MinibusTripFormModal
           existing={showMinibusForm.existing || null}
+          initial={showMinibusForm.initial || null}
           vehicles={minibusVehicles}
+          fuelPrice={fuelSettings?.currentPrice ?? null}
           onSubmit={(data) =>
             showMinibusForm.existing
               ? updateMinibusTrip(
@@ -17933,6 +18971,28 @@ export default function MeleeApp() {
               : createMinibusTrip(data)
           }
           onCancel={() => setShowMinibusForm(null)}
+        />
+      )}
+
+      {/* PARAMÈTRES D'UN MINIBUS */}
+
+      {editingVehicle && (
+        <VehicleParamsModal
+          vehicle={editingVehicle}
+          onSubmit={(params) =>
+            saveVehicleParams(editingVehicle.id, params)
+          }
+          onCancel={() => setEditingVehicle(null)}
+        />
+      )}
+
+      {/* SOURCE DU PRIX DU GAZOLE */}
+
+      {showFuelSource && (
+        <FuelSourceModal
+          settings={fuelSettings}
+          onSubmit={saveFuelSource}
+          onCancel={() => setShowFuelSource(false)}
         />
       )}
 
