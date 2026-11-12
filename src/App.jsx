@@ -61,7 +61,16 @@ import {
   Bus,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
-import { jsPDF } from 'jspdf';
+import {
+  createBrandedPdf,
+  drawPdfSectionTitle,
+  drawPdfSummaryBox,
+  drawPdfTable,
+  finalizeBrandedPdf,
+  loadUsbLogo,
+  pdfKm,
+  pdfMoney,
+} from './pdfBrand.js';
 
 /* =========================================================
    SUPABASE
@@ -828,171 +837,95 @@ function formatClassCreneau(schoolClass) {
     : label;
 }
 
-function drawSchoolSessionsTable(
-  doc,
-  startY,
-  sessions,
-  exercises
-) {
-  const marginX = 15;
-  const pageWidth = 210;
-  const maxY = 280;
-  let y = startY;
-
-  function ensureSpace(next) {
-    if (y + next > maxY) {
-      doc.addPage();
-      y = 20;
-    }
-  }
-
-  doc.setFontSize(9);
-  doc.setFont(undefined, 'bold');
-  doc.text('N°', marginX, y);
-  doc.text('Date', marginX + 10, y);
-  doc.text('Heure', marginX + 45, y);
-  doc.text('Exercices', marginX + 65, y);
-  doc.setFont(undefined, 'normal');
-  y += 3;
-  doc.setDrawColor(150, 150, 150);
-  doc.line(marginX, y, pageWidth - marginX, y);
-  y += 5;
-
-  if (sessions.length === 0) {
-    doc.setFontSize(9);
-    doc.setTextColor(140, 140, 140);
-    doc.text(
-      'Aucune séance programmée.',
-      marginX,
-      y
-    );
-    doc.setTextColor(0, 0, 0);
-    y += 6;
-    return y;
-  }
-
-  sessions.forEach((sess, idx) => {
+function schoolSessionsRows(sessions, exercises) {
+  return sessions.map((sess, idx) => {
     const sessExercises = exercises.filter(
       (e) => e.sessionId === sess.id
     );
-
-    const titles = sessExercises.length
-      ? sessExercises.map((e) => e.title).join(', ')
-      : '—';
-
-    const lines = doc.splitTextToSize(titles, 115);
-
-    ensureSpace(5 * lines.length + 2);
-
-    doc.setFontSize(9);
-    doc.text(String(idx + 1), marginX, y);
-    doc.text(formatDateFR(sess.date), marginX + 10, y);
-    doc.text(sess.time || '—', marginX + 45, y);
-    doc.text(lines, marginX + 65, y);
-
-    y += 5 * lines.length + 2;
+    return {
+      n: String(idx + 1),
+      date: formatDateFR(sess.date),
+      time: sess.time || '—',
+      count: String(sessExercises.length),
+      ex: sessExercises.length
+        ? sessExercises.map((e) => e.title).join(', ')
+        : '—',
+    };
   });
+}
 
-  return y;
+const SCHOOL_SESSION_COLS = [
+  { key: 'n', label: 'N°', w: 12, right: true },
+  { key: 'date', label: 'Date', w: 42 },
+  { key: 'time', label: 'Heure', w: 22 },
+  { key: 'count', label: 'Nb exercices', w: 26, right: true },
+  { key: 'ex', label: 'Exercices' },
+];
+
+function schoolClassInfo(schoolClass) {
+  const parts = [];
+  if (schoolClass.headcount != null) {
+    parts.push(`${schoolClass.headcount} élèves`);
+  }
+  const creneau = formatClassCreneau(schoolClass);
+  if (creneau) parts.push(`Créneau : ${creneau}`);
+  return parts.join(' · ');
 }
 
 function buildClassSessionsPdf(
   school,
   schoolClass,
   sessions,
-  exercises
+  exercises,
+  logo
 ) {
-  const doc = new jsPDF();
-  const marginX = 15;
-  let y = 20;
+  const ctx = createBrandedPdf({
+    title: `Cycle rugby — ${schoolClass.name}`,
+    subtitle: `École : ${school.name}`,
+    infoLine: schoolClassInfo(schoolClass),
+    logo,
+    footerLabel: 'US Baumoise Rugby · Scolaire · Cycles rugby',
+    centerLabel: `Saison ${seasonOf(sessions[0]?.date || todayISO())}`,
+  });
 
-  doc.setFontSize(17);
-  doc.text(
-    `Cycle rugby — ${schoolClass.name}`,
-    marginX,
-    y
-  );
-  y += 9;
+  drawPdfTable(ctx, {
+    cols: SCHOOL_SESSION_COLS,
+    rows: schoolSessionsRows(sessions, exercises),
+    emptyLabel: 'Aucune séance programmée.',
+    total: {
+      label: `TOTAL (${sessions.length} séance${sessions.length > 1 ? 's' : ''})`,
+    },
+  });
 
-  doc.setFontSize(11);
-  doc.text(`École : ${school.name}`, marginX, y);
-  y += 6;
-
-  const infoParts = [];
-
-  if (schoolClass.headcount != null) {
-    infoParts.push(`${schoolClass.headcount} élèves`);
-  }
-
-  const creneau = formatClassCreneau(schoolClass);
-  if (creneau) infoParts.push(`Créneau : ${creneau}`);
-
-  if (infoParts.length) {
-    doc.text(infoParts.join(' · '), marginX, y);
-    y += 8;
-  } else {
-    y += 4;
-  }
-
-  drawSchoolSessionsTable(doc, y, sessions, exercises);
-
-  return doc;
+  return finalizeBrandedPdf(ctx);
 }
 
 function buildSchoolClassesPdf(
   school,
   classes,
   allSessions,
-  allExercises
+  allExercises,
+  logo
 ) {
-  const doc = new jsPDF();
-  const marginX = 15;
-  const pageWidth = 210;
-  const maxY = 280;
-  let y = 20;
-
-  doc.setFontSize(18);
-  doc.text(`Cycles rugby — ${school.name}`, marginX, y);
-  y += 10;
-
   const sortedClasses = [...classes].sort((a, b) =>
     a.name.localeCompare(b.name)
   );
+  const classIds = new Set(classes.map((c) => c.id));
+  const relevant = allSessions.filter((s) => classIds.has(s.classId));
+  const firstDate = relevant
+    .map((s) => s.date)
+    .filter(Boolean)
+    .sort()[0];
 
-  sortedClasses.forEach((cls, idx) => {
-    if (idx > 0) {
-      if (y + 20 > maxY) {
-        doc.addPage();
-        y = 20;
-      } else {
-        y += 4;
-        doc.setDrawColor(210, 210, 210);
-        doc.line(marginX, y, pageWidth - marginX, y);
-        y += 8;
-      }
-    }
+  const ctx = createBrandedPdf({
+    title: `Cycles rugby — ${school.name}`,
+    subtitle: `${sortedClasses.length} classe${sortedClasses.length > 1 ? 's' : ''} · ${relevant.length} séance${relevant.length > 1 ? 's' : ''} programmée${relevant.length > 1 ? 's' : ''}`,
+    logo,
+    footerLabel: 'US Baumoise Rugby · Scolaire · Cycles rugby',
+    centerLabel: `Saison ${seasonOf(firstDate || todayISO())}`,
+  });
 
-    doc.setFontSize(14);
-    doc.setFont(undefined, 'bold');
-    doc.text(cls.name, marginX, y);
-    doc.setFont(undefined, 'normal');
-    y += 6;
-
-    doc.setFontSize(10);
-    const infoParts = [];
-
-    if (cls.headcount != null) {
-      infoParts.push(`${cls.headcount} élèves`);
-    }
-
-    const creneau = formatClassCreneau(cls);
-    if (creneau) infoParts.push(`Créneau : ${creneau}`);
-
-    if (infoParts.length) {
-      doc.text(infoParts.join(' · '), marginX, y);
-      y += 7;
-    }
-
+  sortedClasses.forEach((cls) => {
     const classSessions = allSessions
       .filter((s) => s.classId === cls.id)
       .sort((a, b) =>
@@ -1001,15 +934,16 @@ function buildSchoolClassesPdf(
         )
       );
 
-    y = drawSchoolSessionsTable(
-      doc,
-      y,
-      classSessions,
-      allExercises
-    );
+    drawPdfSectionTitle(ctx, cls.name, schoolClassInfo(cls));
+    drawPdfTable(ctx, {
+      cols: SCHOOL_SESSION_COLS,
+      rows: schoolSessionsRows(classSessions, allExercises),
+      emptyLabel: 'Aucune séance programmée.',
+    });
+    ctx.y += 2;
   });
 
-  return doc;
+  return finalizeBrandedPdf(ctx);
 }
 
 function parseTimeToMinutes(t) {
@@ -7083,148 +7017,41 @@ function TripDetailModal({ trip, onEdit, onDuplicate, onDelete, onCancel }) {
 
 /* ---------- Export PDF des déplacements ---------- */
 
-let usbLogoCache;
-
-async function loadUsbLogo() {
-  if (usbLogoCache !== undefined) return usbLogoCache;
-  try {
-    const res = await fetch('/logo-usb.png');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const blob = await res.blob();
-    usbLogoCache = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  } catch (e) {
-    console.warn('Logo indisponible pour le PDF', e);
-    usbLogoCache = null;
-  }
-  return usbLogoCache;
-}
-
-function pdfMoney(n) {
-  return `${(Number(n) || 0).toLocaleString('fr-FR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })} €`.replace(/ | /g, ' ');
-}
-
-function pdfKm(n) {
-  return `${(Number(n) || 0).toLocaleString('fr-FR', {
-    maximumFractionDigits: 1,
-  })} km`.replace(/ | /g, ' ');
-}
-
 function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) {
-  const doc = new jsPDF({ orientation: 'landscape', format: 'a4' });
-  const W = 297;
-  const H = 210;
-  const M = 12;
-  const YELLOW = [227, 177, 0];
-  const BLACK = [20, 20, 20];
+  const ctx = createBrandedPdf({
+    title: "Gestion de l'entente",
+    subtitle: `Récapitulatif des déplacements · Période : ${periodLabel}`,
+    infoLine: filtersLabel,
+    logo,
+    footerLabel: "US Baumoise Rugby · Gestion de l'entente",
+    centerLabel: `Saison ${seasonLabel}`,
+  });
 
-  // En-tête
-  doc.setFillColor(...BLACK);
-  doc.rect(0, 0, W, 30, 'F');
-  doc.setFillColor(...YELLOW);
-  doc.rect(0, 30, W, 1.6, 'F');
-
-  let titleX = M;
-  if (logo) {
-    try {
-      doc.addImage(logo, 'PNG', M, 4, 35, 22);
-      titleX = M + 40;
-    } catch (e) {
-      console.warn(e);
-    }
-  }
-  doc.setTextColor(...YELLOW);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(18);
-  doc.text("Gestion de l'entente", titleX, 13);
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.text(`Récapitulatif des déplacements · Période : ${periodLabel}`, titleX, 20);
-  if (filtersLabel) doc.text(filtersLabel, titleX, 25);
-  const generated = `Document généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
-  doc.text(generated, W - M, 20, { align: 'right' });
-
-  // Tableau
   const cols = [
     { key: 'date', label: 'Date', w: 22 },
     { key: 'cat', label: 'Catégorie', w: 24 },
-    { key: 'dest', label: 'Destination', w: 68 },
+    { key: 'dest', label: 'Destination', w: 68, maxLines: 2 },
     { key: 'veh', label: 'Véhicule', w: 24 },
     { key: 'ob', label: 'OB', w: 12, right: true },
     { key: 'usb', label: 'USB', w: 12, right: true },
     { key: 'km', label: 'Distance A/R', w: 27, right: true },
     { key: 'fuel', label: 'Carburant', w: 26, right: true },
     { key: 'wear', label: 'Usure', w: 24, right: true },
-    { key: 'total', label: 'Total', w: 34, right: true },
+    { key: 'total', label: 'Total', w: 34, right: true, bold: true },
   ];
-  const tableW = cols.reduce((s, c) => s + c.w, 0);
-  const x0 = (W - tableW) / 2;
-  let y = 40;
-  const bottom = H - 16;
-
-  function drawHeader() {
-    doc.setFillColor(...YELLOW);
-    doc.rect(x0, y, tableW, 8, 'F');
-    doc.setTextColor(...BLACK);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    let x = x0;
-    cols.forEach((c) => {
-      doc.text(c.label, c.right ? x + c.w - 2 : x + 2, y + 5.4, {
-        align: c.right ? 'right' : 'left',
-      });
-      x += c.w;
-    });
-    y += 8;
-    doc.setFont('helvetica', 'normal');
-  }
-
-  drawHeader();
 
   const totals = { km: 0, fuel: 0, wear: 0, total: 0, ob: 0, usb: 0 };
-
-  if (trips.length === 0) {
-    doc.setFontSize(10);
-    doc.setTextColor(120, 120, 120);
-    doc.text('Aucun déplacement sur cette période.', x0 + 2, y + 7);
-    y += 12;
-  }
-
-  trips.forEach((t, i) => {
-    const destLines = doc
-      .splitTextToSize(
-        `${t.tripName ? `${t.tripName} — ` : ''}${t.arrival}`,
-        cols[2].w - 4
-      )
-      .slice(0, 2);
-    const rowH = Math.max(7, destLines.length * 4.2 + 3);
-    if (y + rowH > bottom) {
-      doc.addPage();
-      y = 14;
-      drawHeader();
-    }
-    if (i % 2 === 1) {
-      doc.setFillColor(246, 244, 236);
-      doc.rect(x0, y, tableW, rowH, 'F');
-    }
+  const rows = trips.map((t) => {
     totals.km += t.kmTotal;
     totals.fuel += t.fuelCost || 0;
     totals.wear += t.wearCost || 0;
     totals.total += t.totalCost;
     totals.ob += t.obCount || 0;
     totals.usb += t.usbCount || 0;
-    const values = {
+    return {
       date: formatDateShortFR(t.tripDate),
       cat: t.category || '—',
-      dest: destLines,
+      dest: `${t.tripName ? `${t.tripName} — ` : ''}${t.arrival}`,
       veh: MINIBUS_LABELS[t.vehicle] || t.vehicle,
       ob: t.obCount != null ? String(t.obCount) : '—',
       usb: t.usbCount != null ? String(t.usbCount) : '—',
@@ -7233,89 +7060,34 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
       wear: t.wearCost != null ? pdfMoney(t.wearCost) : '—',
       total: pdfMoney(t.totalCost),
     };
-    doc.setTextColor(...BLACK);
-    doc.setFontSize(8.5);
-    let x = x0;
-    cols.forEach((c) => {
-      doc.setFont('helvetica', c.key === 'total' ? 'bold' : 'normal');
-      doc.text(values[c.key], c.right ? x + c.w - 2 : x + 2, y + 4.8, {
-        align: c.right ? 'right' : 'left',
-      });
-      x += c.w;
-    });
-    doc.setDrawColor(225, 222, 210);
-    doc.line(x0, y + rowH, x0 + tableW, y + rowH);
-    y += rowH;
   });
 
-  // Ligne de total
-  if (y + 9 > bottom) {
-    doc.addPage();
-    y = 14;
-  }
-  doc.setFillColor(...BLACK);
-  doc.rect(x0, y, tableW, 9, 'F');
-  doc.setTextColor(...YELLOW);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
-  doc.text(`TOTAL (${trips.length} déplacement${trips.length > 1 ? 's' : ''})`, x0 + 2, y + 6);
-  let xt = x0;
-  cols.forEach((c) => {
-    const v = { ob: String(totals.ob), usb: String(totals.usb), km: pdfKm(totals.km), fuel: pdfMoney(totals.fuel), wear: pdfMoney(totals.wear), total: pdfMoney(totals.total) }[c.key];
-    if (v) doc.text(v, xt + c.w - 2, y + 6, { align: 'right' });
-    xt += c.w;
+  drawPdfTable(ctx, {
+    cols,
+    rows,
+    emptyLabel: 'Aucun déplacement sur cette période.',
+    total: {
+      label: `TOTAL (${trips.length} déplacement${trips.length > 1 ? 's' : ''})`,
+      ob: String(totals.ob),
+      usb: String(totals.usb),
+      km: pdfKm(totals.km),
+      fuel: pdfMoney(totals.fuel),
+      wear: pdfMoney(totals.wear),
+      total: pdfMoney(totals.total),
+    },
   });
-  y += 16;
 
-  // Récapitulatif financier
-  const boxH = 39;
-  if (y + boxH > bottom) {
-    doc.addPage();
-    y = 14;
-  }
-  doc.setDrawColor(...YELLOW);
-  doc.setLineWidth(0.8);
-  doc.rect(x0, y, 120, boxH);
-  doc.setLineWidth(0.2);
-  doc.setFillColor(...YELLOW);
-  doc.rect(x0, y, 120, 7, 'F');
-  doc.setTextColor(...BLACK);
-  doc.setFontSize(10);
-  doc.text('Récapitulatif financier', x0 + 3, y + 5);
-  const summary = [
+  ctx.y += 1;
+  drawPdfSummaryBox(ctx, 'Récapitulatif financier', [
     ['Nombre de déplacements', String(trips.length)],
     ['Personnes transportées (OB / USB)', `${totals.ob + totals.usb} (${totals.ob} / ${totals.usb})`],
     ['Kilométrage total', pdfKm(totals.km)],
     ['Total carburant', pdfMoney(totals.fuel)],
     ['Total usure', pdfMoney(totals.wear)],
     ['Coût global', pdfMoney(totals.total)],
-  ];
-  summary.forEach(([label, value], i) => {
-    const ly = y + 12 + i * 4.8;
-    const last = i === summary.length - 1;
-    doc.setFont('helvetica', last ? 'bold' : 'normal');
-    doc.setFontSize(last ? 10 : 9);
-    doc.text(label, x0 + 3, ly);
-    doc.text(value, x0 + 117, ly, { align: 'right' });
-  });
+  ]);
 
-  // Bas de page sur chaque page
-  const pages = doc.getNumberOfPages();
-  for (let p = 1; p <= pages; p++) {
-    doc.setPage(p);
-    doc.setFillColor(...BLACK);
-    doc.rect(0, H - 9, W, 9, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.text("US Baumoise Rugby · Gestion de l'entente", M, H - 3.5);
-    doc.setTextColor(...YELLOW);
-    doc.text(`Saison ${seasonLabel}`, W / 2, H - 3.5, { align: 'center' });
-    doc.setTextColor(255, 255, 255);
-    doc.text(`Page ${p} / ${pages}`, W - M, H - 3.5, { align: 'right' });
-  }
-
-  return doc;
+  return finalizeBrandedPdf(ctx);
 }
 
 function MinibusPicker({ value, onChange, vehicles, fuelPrice }) {
@@ -12222,54 +11994,30 @@ export default function MeleeApp() {
     }
   }
 
-  function buildPlanningPdf(week, entries, monday) {
-    const doc = new jsPDF();
-    const marginX = 15;
-    const pageWidth = 210;
-    const maxY = 280;
-    let y = 20;
+  function buildPlanningPdf(week, entries, monday, logo) {
+    const weekLabel = `Semaine ${String(week.weekNumber).padStart(
+      2,
+      '0'
+    )} de ${week.year}`;
 
-    function ensureSpace(next) {
-      if (y + next > maxY) {
-        doc.addPage();
-        y = 20;
-      }
-    }
+    const ctx = createBrandedPdf({
+      title: 'Feuille de temps hebdomadaire',
+      subtitle: `${weekLabel} · ${formatWeekRangeFR(monday)}`,
+      infoLine: `Utilisateur : ${week.userDisplayName}`,
+      logo,
+      footerLabel: 'US Baumoise Rugby · Gestion planning',
+      centerLabel: `Saison ${seasonOf(dateToISO(monday))}`,
+    });
 
-    doc.setFontSize(16);
-    doc.text(
-      'Feuille de temps hebdomadaire',
-      marginX,
-      y
-    );
-    y += 10;
-
-    doc.setFontSize(11);
-    doc.text(
-      `Semaine ${String(
-        week.weekNumber
-      ).padStart(2, '0')} de ${week.year}`,
-      marginX,
-      y
-    );
-    y += 7;
-
-    doc.text(
-      `Utilisateur : ${week.userDisplayName}`,
-      marginX,
-      y
-    );
-    y += 10;
-
+    const rows = [];
+    const dayTotals = [];
     let weekTotalMinutes = 0;
 
     DAY_LABELS_FULL.forEach((label, dayIndex) => {
       const dayEntries = entries
         .filter((e) => e.dayIndex === dayIndex)
         .sort((a, b) =>
-          (a.startTime || '').localeCompare(
-            b.startTime || ''
-          )
+          (a.startTime || '').localeCompare(b.startTime || '')
         );
 
       const dayDate = new Date(
@@ -12277,106 +12025,71 @@ export default function MeleeApp() {
         monday.getMonth(),
         monday.getDate() + dayIndex
       );
-
-      const dateLabel = `${String(
-        dayDate.getDate()
-      ).padStart(2, '0')}/${String(
-        dayDate.getMonth() + 1
-      ).padStart(2, '0')}`;
-
-      ensureSpace(14);
-
-      doc.setFontSize(12);
-      doc.setFont(undefined, 'bold');
-      doc.text(
-        `${label} ${dateLabel}`,
-        marginX,
-        y
-      );
-      doc.setFont(undefined, 'normal');
-      doc.setFontSize(10);
+      const dateLabel = `${String(dayDate.getDate()).padStart(
+        2,
+        '0'
+      )}/${String(dayDate.getMonth() + 1).padStart(2, '0')}`;
 
       let dayTotalMinutes = 0;
 
       if (dayEntries.length === 0) {
-        y += 6;
-        doc.setTextColor(140, 140, 140);
-        doc.text(
-          'Aucun horaire',
-          marginX + 4,
-          y
-        );
-        doc.setTextColor(0, 0, 0);
-        y += 6;
-      } else {
-        dayEntries.forEach((entry) => {
-          const duration =
-            entryDurationMinutes(entry);
-          dayTotalMinutes += duration;
-
-          const desc = entry.description
-            ? doc.splitTextToSize(
-                entry.description,
-                130
-              )
-            : [''];
-
-          ensureSpace(6 * desc.length + 2);
-          y += 6;
-
-          doc.text(
-            `${entry.startTime || '--:--'} - ${
-              entry.endTime || '--:--'
-            }  (${formatMinutes(duration)})`,
-            marginX + 4,
-            y
-          );
-
-          if (desc[0]) {
-            doc.text(desc, marginX + 4, y + 5);
-            y += 5 * desc.length;
-          }
+        rows.push({
+          day: label,
+          date: dateLabel,
+          start: '—',
+          end: '—',
+          dur: '—',
+          desc: 'Aucun horaire',
         });
-
-        y += 6;
-        doc.setFont(undefined, 'bold');
-        doc.text(
-          `Total jour : ${formatMinutes(
-            dayTotalMinutes
-          )}`,
-          marginX + 4,
-          y
-        );
-        doc.setFont(undefined, 'normal');
+      } else {
+        dayEntries.forEach((entry, i) => {
+          const duration = entryDurationMinutes(entry);
+          dayTotalMinutes += duration;
+          rows.push({
+            day: i === 0 ? label : '',
+            date: i === 0 ? dateLabel : '',
+            start: entry.startTime || '--:--',
+            end: entry.endTime || '--:--',
+            dur: formatMinutes(duration),
+            desc: entry.description || '',
+          });
+        });
+        if (dayEntries.length > 1) {
+          rows.push({
+            _subtotal: true,
+            day: `Total ${label.toLowerCase()}`,
+            dur: formatMinutes(dayTotalMinutes),
+          });
+        }
       }
 
+      dayTotals.push([`${label} ${dateLabel}`, formatMinutes(dayTotalMinutes)]);
       weekTotalMinutes += dayTotalMinutes;
-      y += 4;
-      doc.setDrawColor(210, 210, 210);
-      doc.line(
-        marginX,
-        y,
-        pageWidth - marginX,
-        y
-      );
-      y += 4;
     });
 
-    ensureSpace(12);
-    y += 4;
+    drawPdfTable(ctx, {
+      cols: [
+        { key: 'day', label: 'Jour', w: 32, bold: true },
+        { key: 'date', label: 'Date', w: 18 },
+        { key: 'start', label: 'Début', w: 18 },
+        { key: 'end', label: 'Fin', w: 18 },
+        { key: 'dur', label: 'Durée', w: 22, right: true, bold: true },
+        { key: 'desc', label: 'Description' },
+      ],
+      rows,
+      total: {
+        label: 'TOTAL SEMAINE (lundi au dimanche)',
+        dur: formatMinutes(weekTotalMinutes),
+      },
+    });
 
-    doc.setFontSize(13);
-    doc.setFont(undefined, 'bold');
-    doc.text(
-      `Total semaine (lundi au dimanche) : ${formatMinutes(
-        weekTotalMinutes
-      )}`,
-      marginX,
-      y
-    );
-    doc.setFont(undefined, 'normal');
+    ctx.y += 1;
+    drawPdfSummaryBox(ctx, 'Récapitulatif de la semaine', [
+      ...dayTotals,
+      ['Total semaine', formatMinutes(weekTotalMinutes)],
+    ]);
 
-    return doc;
+    return finalizeBrandedPdf(ctx);
   }
 
   async function validatePlanningWeek(
@@ -12387,10 +12100,13 @@ export default function MeleeApp() {
     try {
       setValidatingPlanningWeek(true);
 
+      const logo = await loadUsbLogo();
+
       const pdf = buildPlanningPdf(
         week,
         entries,
-        monday
+        monday,
+        logo
       );
 
       const blob = pdf.output('blob');
@@ -18137,13 +17853,16 @@ export default function MeleeApp() {
                           selectedSchoolClasses.length ===
                           0
                         }
-                        onClick={() => {
+                        onClick={async () => {
+                          const logo =
+                            await loadUsbLogo();
                           const doc =
                             buildSchoolClassesPdf(
                               selectedSchool,
                               selectedSchoolClasses,
                               schoolSessions,
-                              schoolExercises
+                              schoolExercises,
+                              logo
                             );
 
                           doc.save(
@@ -18423,13 +18142,16 @@ export default function MeleeApp() {
                           selectedClassSessions.length ===
                           0
                         }
-                        onClick={() => {
+                        onClick={async () => {
+                          const logo =
+                            await loadUsbLogo();
                           const doc =
                             buildClassSessionsPdf(
                               selectedSchool,
                               selectedClass,
                               selectedClassSessions,
-                              schoolExercises
+                              schoolExercises,
+                              logo
                             );
 
                           doc.save(
