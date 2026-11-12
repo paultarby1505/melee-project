@@ -6223,54 +6223,317 @@ async function computeRoadDistanceKm(departure, arrival) {
   };
 }
 
+const TRIP_CATEGORIES = [
+  'Baby Rugby',
+  'M8',
+  'M10',
+  'M12',
+  'M14',
+  'M16',
+  'M19',
+  'Seniors',
+  'Autre',
+];
+
+const TRIP_PURPOSES = [
+  'Match',
+  'Tournoi',
+  'Entraînement',
+  'Stage',
+  'Événement',
+  'Autre',
+];
+
+// Saison sportive : du 1er juillet au 30 juin (ex. « 2026-2027 »).
+function seasonOf(iso) {
+  if (!iso) return '';
+  const [y, m] = iso.split('-').map(Number);
+  const start = m >= 7 ? y : y - 1;
+  return `${start}-${start + 1}`;
+}
+
+function formatDuration(min) {
+  if (min == null || !Number.isFinite(Number(min))) return '—';
+  const total = Math.round(Number(min));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return h ? `${h} h ${String(m).padStart(2, '0')}` : `${m} min`;
+}
+
+function formatDateShortFR(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+/*
+  Itinéraire routier (pas de vol d'oiseau) : service d'itinéraire de la
+  Géoplateforme IGN, avec OSRM (OpenStreetMap) en secours. Aucune clé API.
+*/
+
+function summarizeRoute(steps) {
+  const byName = new Map();
+  steps.forEach((s, i) => {
+    const name = (s.name || '').trim();
+    if (!name) return;
+    const cur = byName.get(name) || { km: 0, first: i };
+    cur.km += s.km;
+    byName.set(name, cur);
+  });
+  return [...byName.entries()]
+    .sort((a, b) => b[1].km - a[1].km)
+    .slice(0, 4)
+    .sort((a, b) => a[1].first - b[1].first)
+    .map(([name]) =>
+      name
+        .toLowerCase()
+        .replace(/(^|[\s'/-])\S/g, (c) => c.toUpperCase())
+        .replace(/^(D|N|A|M)(\d)/i, (c) => c.toUpperCase())
+    )
+    .join(' → ');
+}
+
+async function computeRoadRoute(a, b) {
+  try {
+    const data = await fetchJsonWithTimeout(
+      'https://data.geopf.fr/navigation/itineraire?resource=bdtopo-osrm&profile=car' +
+        '&optimization=fastest&distanceUnit=kilometer&timeUnit=minute' +
+        '&getSteps=true&getBbox=false' +
+        `&start=${a.lon},${a.lat}&end=${b.lon},${b.lat}`
+    );
+    if (typeof data?.distance === 'number' && data.distance > 0) {
+      const steps = (data.portions || []).flatMap((p) =>
+        (p.steps || []).map((s) => ({
+          name: s.attributes?.name || '',
+          km: Number(s.distance) || 0,
+        }))
+      );
+      return {
+        kmOneWay: roundKm(data.distance),
+        durationMin: Math.round(Number(data.duration) || 0),
+        summary: summarizeRoute(steps),
+        provider: 'IGN',
+      };
+    }
+  } catch (e) {
+    console.warn('Itinéraire IGN indisponible', e);
+  }
+
+  try {
+    const data = await fetchJsonWithTimeout(
+      `https://router.project-osrm.org/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}?overview=false&steps=true`
+    );
+    const route = data?.routes?.[0];
+    if (route && route.distance > 0) {
+      const steps = (route.legs || []).flatMap((l) =>
+        (l.steps || []).map((s) => ({
+          name: s.ref || s.name || '',
+          km: (s.distance || 0) / 1000,
+        }))
+      );
+      return {
+        kmOneWay: roundKm(route.distance / 1000),
+        durationMin: Math.round((route.duration || 0) / 60),
+        summary: summarizeRoute(steps),
+        provider: 'OSRM',
+      };
+    }
+  } catch (e) {
+    console.warn('Itinéraire OSRM indisponible', e);
+  }
+
+  return null;
+}
+
+function AddressAutocomplete({
+  label,
+  value,
+  point,
+  onTextChange,
+  onSelect,
+  placeholder,
+}) {
+  const [suggestions, setSuggestions] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const timer = useRef(null);
+  const lastQuery = useRef('');
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  function handleChange(text) {
+    onTextChange(text);
+    clearTimeout(timer.current);
+    if (text.trim().length < 3) {
+      setSuggestions([]);
+      setOpen(false);
+      return;
+    }
+    timer.current = setTimeout(async () => {
+      lastQuery.current = text;
+      setLoading(true);
+      try {
+        const data = await fetchJsonWithTimeout(
+          `https://data.geopf.fr/geocodage/completion?text=${encodeURIComponent(
+            text.trim()
+          )}&maximumResponses=6`
+        );
+        if (lastQuery.current !== text) return;
+        setSuggestions(
+          (data?.results || [])
+            .filter((r) => r.x != null && r.y != null)
+            .map((r) => ({
+              label: r.fulltext,
+              lat: Number(r.y),
+              lon: Number(r.x),
+            }))
+        );
+        setOpen(true);
+      } catch (e) {
+        console.warn('Autocomplétion indisponible', e);
+        setSuggestions([]);
+      }
+      setLoading(false);
+    }, 300);
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <label>{label}</label>
+      <div style={{ position: 'relative' }}>
+        <input
+          value={value}
+          onChange={(e) => handleChange(e.target.value)}
+          onFocus={() => suggestions.length && setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder={placeholder}
+          autoComplete="off"
+        />
+        {loading && (
+          <Loader2
+            size={14}
+            className="animate-spin"
+            style={{ position: 'absolute', right: 10, top: 12 }}
+          />
+        )}
+      </div>
+      {point ? (
+        <p className="text-xs mt-1 flex items-center gap-1" style={{ color: '#2D6A4F' }}>
+          <Check size={12} />
+          Adresse localisée
+        </p>
+      ) : (
+        value.trim().length >= 3 && (
+          <p className="text-xs mt-1" style={{ color: 'var(--ink-light)' }}>
+            Choisis une suggestion dans la liste.
+          </p>
+        )
+      )}
+      {open && suggestions.length > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            zIndex: 30,
+            left: 0,
+            right: 0,
+            top: '100%',
+            marginTop: 2,
+            background: 'var(--white)',
+            border: '1px solid var(--line)',
+            borderRadius: 8,
+            boxShadow: '0 6px 16px rgba(0,0,0,.12)',
+            maxHeight: 240,
+            overflowY: 'auto',
+          }}
+        >
+          {suggestions.map((s) => (
+            <button
+              key={`${s.label}-${s.lat}-${s.lon}`}
+              type="button"
+              className="w-full text-left text-sm px-3 py-2"
+              style={{ borderBottom: '1px solid var(--line)' }}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onSelect(s);
+                setOpen(false);
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MinibusTripFormModal({
   existing,
+  duplicateFrom,
   initial,
   vehicles,
   fuelPrice,
   onSubmit,
   onCancel,
 }) {
-  const [vehicle, setVehicle] = useState(
-    existing?.vehicle || initial?.vehicle || 'recent'
-  );
+  const src = existing || duplicateFrom || null;
+  const pointOf = (lat, lon, label) =>
+    lat != null && lon != null ? { lat, lon, label } : null;
+
+  const [tripName, setTripName] = useState(src?.tripName || '');
+  const [category, setCategory] = useState(src?.category || '');
+  const [purpose, setPurpose] = useState(src?.purpose || 'Match');
   const [tripDate, setTripDate] = useState(
     existing?.tripDate || todayISO()
   );
-  const [departure, setDeparture] = useState(
-    existing?.departure || ''
+  const [departure, setDeparture] = useState(src?.departure || '');
+  const [depPoint, setDepPoint] = useState(
+    src ? pointOf(src.departureLat, src.departureLon, src.departure) : null
   );
-  const [arrival, setArrival] = useState(
-    existing?.arrival || ''
+  const [arrival, setArrival] = useState(src?.arrival || '');
+  const [arrPoint, setArrPoint] = useState(
+    src ? pointOf(src.arrivalLat, src.arrivalLon, src.arrival) : null
+  );
+  const [vehicle, setVehicle] = useState(
+    src?.vehicle || initial?.vehicle || null
   );
   const [roundTrip, setRoundTrip] = useState(
-    existing
-      ? existing.roundTrip
-      : initial?.roundTrip ?? true
+    src ? src.roundTrip : initial?.roundTrip ?? true
   );
   const [kmOneWay, setKmOneWay] = useState(
-    existing
-      ? String(existing.kmOneWay)
+    src
+      ? String(src.kmOneWay)
       : initial?.kmOneWay
       ? String(initial.kmOneWay)
       : ''
   );
-  const [reason, setReason] = useState(
-    existing?.reason || ''
+  const [route, setRoute] = useState(
+    src && src.distanceSource === 'auto'
+      ? {
+          kmOneWay: src.kmOneWay,
+          durationMin: src.durationMin,
+          summary: src.routeSummary,
+        }
+      : null
   );
-  const [driver, setDriver] = useState(
-    existing?.driver || ''
+  const [distanceSource, setDistanceSource] = useState(
+    src?.distanceSource || (initial ? 'manual' : null)
   );
+  const [manualConfirmed, setManualConfirmed] = useState(
+    !!src && src.distanceSource === 'manual'
+  );
+  const [notes, setNotes] = useState(src?.reason || '');
+  const [driver, setDriver] = useState(src?.driver || '');
   const [calcBusy, setCalcBusy] = useState(false);
-  const [calcInfo, setCalcInfo] = useState(null);
+  const [calcError, setCalcError] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // Un trajet déjà enregistré garde les paramètres appliqués lors de
-  // sa saisie (prix du gazole, consommation, usure) tant qu'on ne
-  // change pas de minibus.
+  // Un déplacement modifié garde le prix du gazole et les paramètres du
+  // véhicule de sa saisie, sauf si on change de minibus. Un déplacement
+  // dupliqué est un nouveau déplacement : il prend le prix du jour.
   const keepOld =
-    existing &&
+    !!existing &&
     existing.vehicle === vehicle &&
     existing.fuelPrice != null;
   const currentVehicle = vehicles.find((v) => v.id === vehicle);
@@ -6283,80 +6546,127 @@ function MinibusTripFormModal({
   const price = keepOld ? existing.fuelPrice : fuelPrice;
 
   const km = Number(String(kmOneWay).replace(',', '.'));
+  const kmValid = Number.isFinite(km) && km > 0 && km < 3000;
   const preview =
-    Number.isFinite(km) && km > 0
-      ? computeMinibusTrip(km, roundTrip, params, price)
-      : null;
+    kmValid && vehicle ? computeMinibusTrip(km, roundTrip, params, price) : null;
+  const distanceValidated =
+    kmValid &&
+    ((distanceSource === 'auto' &&
+      route &&
+      Math.abs(route.kmOneWay - km) < 0.05) ||
+      (distanceSource === 'manual' && manualConfirmed));
+
+  function resetRoute() {
+    setRoute(null);
+    if (distanceSource === 'auto') setDistanceSource(null);
+    setCalcError('');
+  }
 
   async function calculate() {
+    setCalcError('');
     if (!departure.trim() || !arrival.trim()) {
-      setCalcInfo({
-        ok: false,
-        text: 'Indique un départ et une arrivée.',
-      });
+      setCalcError('Indique une adresse de départ et une adresse d’arrivée.');
       return;
     }
     setCalcBusy(true);
-    setCalcInfo(null);
-    const res = await computeRoadDistanceKm(
-      departure.trim(),
-      arrival.trim()
-    );
-    setCalcBusy(false);
-    if (res.error) {
-      setCalcInfo({ ok: false, text: res.error });
-    } else {
-      setKmOneWay(String(res.km));
-      setCalcInfo({
-        ok: true,
-        text: `${formatKm(res.km)} (aller) : ${res.departureLabel} → ${res.arrivalLabel}`,
-      });
+    let a = depPoint;
+    let b = arrPoint;
+    if (!a) {
+      a = await geocodePlace(departure.trim());
+      if (a) setDepPoint(a);
     }
+    if (!b) {
+      b = await geocodePlace(arrival.trim());
+      if (b) setArrPoint(b);
+    }
+    if (!a || !b) {
+      setCalcBusy(false);
+      setCalcError(
+        `Adresse ${!a ? 'de départ' : "d'arrivée"} introuvable : choisis une suggestion dans la liste.`
+      );
+      return;
+    }
+    const res = await computeRoadRoute(a, b);
+    setCalcBusy(false);
+    if (!res) {
+      setCalcError(
+        "Le calcul d'itinéraire est indisponible pour le moment. Réessaie, ou saisis la distance à la main et confirme-la."
+      );
+      return;
+    }
+    setRoute(res);
+    setKmOneWay(String(res.kmOneWay));
+    setDistanceSource('auto');
+    setManualConfirmed(false);
   }
 
   async function submit() {
-    if (price == null) {
-      setError(
-        "Aucun prix du gazole connu : actualise le prix ou saisis-le à la main avant d'enregistrer."
+    setError('');
+    if (!tripName.trim()) return setError('Donne un nom au déplacement.');
+    if (!category) return setError('Choisis la catégorie concernée.');
+    if (!tripDate) return setError('La date est obligatoire.');
+    if (!departure.trim() || !arrival.trim())
+      return setError("Les adresses de départ et d'arrivée sont obligatoires.");
+    if (!vehicle) return setError('Choisis le minibus utilisé.');
+    if (!kmValid)
+      return setError("Calcule l'itinéraire ou saisis la distance aller.");
+    if (!distanceValidated)
+      return setError(
+        "La distance n'est pas validée : calcule l'itinéraire, ou confirme la distance saisie à la main."
       );
-      return;
-    }
-    if (!departure.trim() || !arrival.trim()) {
-      setError("Le départ et l'arrivée sont obligatoires.");
-      return;
-    }
-    if (!tripDate) {
-      setError('La date est obligatoire.');
-      return;
-    }
-    if (!preview) {
-      setError(
-        'Indique les kilomètres (bouton « Calculer » ou saisie manuelle).'
+    if (price == null)
+      return setError(
+        "Aucun prix du gazole connu : actualise le prix dans l'onglet Carburant et véhicules."
       );
-      return;
-    }
+    if (!preview) return setError('Calcul du coût impossible.');
 
     setBusy(true);
     await onSubmit({
+      tripName: tripName.trim(),
+      category,
+      purpose,
       vehicle,
       tripDate,
       departure: departure.trim(),
       arrival: arrival.trim(),
+      departureLat: depPoint?.lat ?? null,
+      departureLon: depPoint?.lon ?? null,
+      arrivalLat: arrPoint?.lat ?? null,
+      arrivalLon: arrPoint?.lon ?? null,
       roundTrip,
+      distanceSource,
+      durationMin: distanceSource === 'auto' ? route?.durationMin ?? null : null,
+      routeSummary: distanceSource === 'auto' ? route?.summary || '' : '',
       fuelPrice: Number(price),
       consumption: Number(params?.consumption) || 0,
       wearCostPerKm: Number(params?.wearCostPerKm) || 0,
       ...preview,
-      reason: reason.trim(),
+      reason: notes.trim(),
       driver: driver.trim(),
     });
     setBusy(false);
   }
 
+  const title = existing
+    ? 'Modifier le déplacement'
+    : duplicateFrom
+    ? 'Dupliquer le déplacement'
+    : 'Nouveau déplacement';
+
+  const sectionTitle = (t) => (
+    <p
+      className="text-xs font-semibold uppercase mt-1"
+      style={{ color: 'var(--ink-light)', letterSpacing: '0.03em' }}
+    >
+      {t}
+    </p>
+  );
+
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div
         className="modal-card"
+        style={{ maxWidth: 620 }}
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -6367,14 +6677,197 @@ function MinibusTripFormModal({
           <X size={14} />
         </button>
 
-        <h3 className="font-display text-lg">
-          {existing ? 'Modifier le déplacement' : 'Nouveau déplacement'}
-        </h3>
+        <h3 className="font-display text-lg">{title}</h3>
 
         <div
           className="mt-4"
           style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
         >
+          {sectionTitle('Informations du déplacement')}
+
+          <div>
+            <label>Nom du déplacement</label>
+            <input
+              value={tripName}
+              onChange={(e) => setTripName(e.target.value)}
+              placeholder="Ex. Match M14 contre Besançon"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label>Catégorie</label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+              >
+                <option value="">Choisir…</option>
+                {TRIP_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Date</label>
+              <input
+                type="date"
+                value={tripDate}
+                onChange={(e) => setTripDate(e.target.value)}
+              />
+            </div>
+            <div>
+              <label>Motif</label>
+              <select
+                value={purpose}
+                onChange={(e) => setPurpose(e.target.value)}
+              >
+                {TRIP_PURPOSES.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {sectionTitle('Itinéraire')}
+
+          <AddressAutocomplete
+            label="Adresse de départ"
+            value={departure}
+            point={depPoint}
+            placeholder="Ex. Stade Raguin, Baume-les-Dames"
+            onTextChange={(t) => {
+              setDeparture(t);
+              setDepPoint(null);
+              resetRoute();
+            }}
+            onSelect={(s) => {
+              setDeparture(s.label);
+              setDepPoint(s);
+              resetRoute();
+            }}
+          />
+
+          <AddressAutocomplete
+            label="Adresse d'arrivée"
+            value={arrival}
+            point={arrPoint}
+            placeholder="Ex. Stade Léo Lagrange, Besançon"
+            onTextChange={(t) => {
+              setArrival(t);
+              setArrPoint(null);
+              resetRoute();
+            }}
+            onSelect={(s) => {
+              setArrival(s.label);
+              setArrPoint(s);
+              resetRoute();
+            }}
+          />
+
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={calculate}
+            disabled={calcBusy}
+            style={{ alignSelf: 'flex-start' }}
+          >
+            {calcBusy ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <RefreshCw size={14} />
+            )}
+            Calculer l'itinéraire
+          </button>
+
+          {calcError && (
+            <p className="text-xs flex items-center gap-1" style={{ color: 'var(--red)' }}>
+              <AlertTriangle size={12} />
+              {calcError}
+            </p>
+          )}
+
+          {route && distanceSource === 'auto' && (
+            <div
+              style={{
+                border: '1px solid var(--line)',
+                borderRadius: 8,
+                padding: 12,
+                background: '#FFF8DC',
+              }}
+            >
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <p className="text-xs" style={{ color: 'var(--ink-light)' }}>
+                    Aller
+                  </p>
+                  <p className="font-semibold">{formatKm(route.kmOneWay)}</p>
+                </div>
+                <div>
+                  <p className="text-xs" style={{ color: 'var(--ink-light)' }}>
+                    Aller-retour
+                  </p>
+                  <p className="font-semibold">
+                    {formatKm(roundKm(route.kmOneWay * 2))}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs" style={{ color: 'var(--ink-light)' }}>
+                    Durée (aller)
+                  </p>
+                  <p className="font-semibold">
+                    {formatDuration(route.durationMin)}
+                  </p>
+                </div>
+              </div>
+              {route.summary && (
+                <p className="text-xs mt-2" style={{ color: 'var(--ink-light)' }}>
+                  Itinéraire : {route.summary}
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label>Distance aller (km)</label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={kmOneWay}
+                onChange={(e) => {
+                  setKmOneWay(e.target.value);
+                  setDistanceSource('manual');
+                  setManualConfirmed(false);
+                }}
+                placeholder="Calculée automatiquement"
+              />
+            </div>
+            <div style={{ alignSelf: 'end' }}>
+              <TripTypeToggle value={roundTrip} onChange={setRoundTrip} />
+            </div>
+          </div>
+
+          {distanceSource === 'manual' && kmValid && (
+            <label
+              className="flex items-center gap-2 text-sm"
+              style={{ cursor: 'pointer' }}
+            >
+              <input
+                type="checkbox"
+                style={{ width: 'auto' }}
+                checked={manualConfirmed}
+                onChange={(e) => setManualConfirmed(e.target.checked)}
+              />
+              Je confirme la distance saisie à la main ({formatKm(km)} aller)
+            </label>
+          )}
+
+          {sectionTitle('Minibus')}
+
           <MinibusPicker
             value={vehicle}
             onChange={setVehicle}
@@ -6382,99 +6875,34 @@ function MinibusTripFormModal({
             fuelPrice={fuelPrice}
           />
 
-          <div>
-            <label>Date du déplacement</label>
-            <input
-              type="date"
-              value={tripDate}
-              onChange={(e) => setTripDate(e.target.value)}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label>Départ</label>
-              <input
-                value={departure}
-                onChange={(e) => setDeparture(e.target.value)}
-                placeholder="Ex. Baume-les-Dames"
-              />
-            </div>
-            <div>
-              <label>Arrivée</label>
-              <input
-                value={arrival}
-                onChange={(e) => setArrival(e.target.value)}
-                placeholder="Ex. Besançon"
-              />
-            </div>
-          </div>
-
-          <TripTypeToggle value={roundTrip} onChange={setRoundTrip} />
-
-          <div>
-            <label>Distance aller (km)</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                inputMode="decimal"
-                value={kmOneWay}
-                onChange={(e) => setKmOneWay(e.target.value)}
-                placeholder="Calcul auto ou saisie"
-              />
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={calculate}
-                disabled={calcBusy}
-                style={{ flexShrink: 0 }}
-              >
-                {calcBusy ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <RefreshCw size={14} />
-                )}
-                Calculer
-              </button>
-            </div>
-            {calcInfo && (
-              <p
-                className="text-xs mt-1"
-                style={{
-                  color: calcInfo.ok ? 'var(--ink-light)' : 'var(--red)',
-                }}
-              >
-                {calcInfo.text}
-              </p>
-            )}
-          </div>
-
           <TripCostBreakdown
             preview={preview}
             fuelPrice={price}
+            roundTrip={roundTrip}
             note={
               keepOld
                 ? `Calcul d'origine conservé : gazole à ${formatFuelPrice(
                     price
                   )}.`
+                : !vehicle
+                ? 'Choisis un minibus pour voir le coût.'
                 : null
             }
           />
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label>Motif (optionnel)</label>
-              <input
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="Ex. Tournoi U12"
-              />
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label>Conducteur (optionnel)</label>
               <input
                 value={driver}
                 onChange={(e) => setDriver(e.target.value)}
+              />
+            </div>
+            <div>
+              <label>Remarques (optionnel)</label>
+              <input
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
               />
             </div>
           </div>
@@ -6495,12 +6923,341 @@ function MinibusTripFormModal({
             onClick={submit}
             disabled={busy}
           >
-            {busy ? 'Enregistrement…' : 'Enregistrer'}
+            {busy ? 'Enregistrement…' : 'Enregistrer le déplacement'}
           </button>
         </div>
       </div>
     </div>
   );
+}
+
+function TripDetailModal({ trip, onEdit, onDuplicate, onDelete, onCancel }) {
+  const rows = [
+    ['Date', `${formatDateFR(trip.tripDate)} ${trip.tripDate.slice(0, 4)}`],
+    ['Catégorie', trip.category || '—'],
+    ['Motif', trip.purpose || '—'],
+    ['Saison', seasonOf(trip.tripDate)],
+    ['Départ', trip.departure],
+    ['Arrivée', trip.arrival],
+    [
+      'Distance',
+      `${formatKm(trip.kmOneWay)} aller${
+        trip.roundTrip ? ` · ${formatKm(trip.kmTotal)} aller-retour` : ''
+      }${trip.distanceSource === 'manual' ? ' (saisie à la main)' : ''}`,
+    ],
+    ['Durée estimée (aller)', formatDuration(trip.durationMin)],
+    ['Itinéraire', trip.routeSummary || '—'],
+    [
+      'Minibus',
+      `${MINIBUS_LABELS[trip.vehicle] || trip.vehicle}${
+        trip.consumption != null ? ` · ${trip.consumption} L/100 km` : ''
+      }`,
+    ],
+    ['Prix du gazole appliqué', formatFuelPrice(trip.fuelPrice)],
+    ['Coût carburant', trip.fuelCost != null ? formatCurrency(trip.fuelCost) : '—'],
+    [
+      "Coût d'usure",
+      trip.wearCost != null
+        ? `${formatCurrency(trip.wearCost)} (${formatPerKm(trip.wearCostPerKm)})`
+        : '—',
+    ],
+    ['Conducteur', trip.driver || '—'],
+    ['Remarques', trip.reason || '—'],
+    ['Saisi par', trip.createdBy || '—'],
+  ];
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        style={{ maxWidth: 560 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+        <h3 className="font-display text-lg pr-8">
+          {trip.tripName || `${trip.departure} → ${trip.arrival}`}
+        </h3>
+
+        <div className="mt-3">
+          {rows.map(([label, value]) => (
+            <div
+              key={label}
+              className="flex justify-between gap-4 text-sm py-1"
+              style={{ borderBottom: '1px solid var(--line)' }}
+            >
+              <span style={{ color: 'var(--ink-light)', flexShrink: 0 }}>
+                {label}
+              </span>
+              <span className="text-right">{value}</span>
+            </div>
+          ))}
+          <div className="flex justify-between mt-3">
+            <strong>Coût total</strong>
+            <strong className="score" style={{ fontSize: 22 }}>
+              {formatCurrency(trip.totalCost)}
+            </strong>
+          </div>
+        </div>
+
+        <div className="flex justify-between gap-2 mt-5 flex-wrap">
+          <button
+            className="btn-secondary"
+            style={{ color: 'var(--red)' }}
+            onClick={onDelete}
+          >
+            <Trash2 size={14} />
+            Supprimer
+          </button>
+          <div className="flex gap-2">
+            <button className="btn-secondary" onClick={onDuplicate}>
+              <Copy size={14} />
+              Dupliquer
+            </button>
+            <button className="btn-primary" onClick={onEdit}>
+              <Pencil size={14} />
+              Modifier
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Export PDF des déplacements ---------- */
+
+let usbLogoCache;
+
+async function loadUsbLogo() {
+  if (usbLogoCache !== undefined) return usbLogoCache;
+  try {
+    const res = await fetch('/logo-usb.png');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    usbLogoCache = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (e) {
+    console.warn('Logo indisponible pour le PDF', e);
+    usbLogoCache = null;
+  }
+  return usbLogoCache;
+}
+
+function pdfMoney(n) {
+  return `${(Number(n) || 0).toLocaleString('fr-FR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} €`.replace(/ | /g, ' ');
+}
+
+function pdfKm(n) {
+  return `${(Number(n) || 0).toLocaleString('fr-FR', {
+    maximumFractionDigits: 1,
+  })} km`.replace(/ | /g, ' ');
+}
+
+function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) {
+  const doc = new jsPDF({ orientation: 'landscape', format: 'a4' });
+  const W = 297;
+  const H = 210;
+  const M = 12;
+  const YELLOW = [227, 177, 0];
+  const BLACK = [20, 20, 20];
+
+  // En-tête
+  doc.setFillColor(...BLACK);
+  doc.rect(0, 0, W, 30, 'F');
+  doc.setFillColor(...YELLOW);
+  doc.rect(0, 30, W, 1.6, 'F');
+
+  let titleX = M;
+  if (logo) {
+    try {
+      doc.addImage(logo, 'PNG', M, 4, 35, 22);
+      titleX = M + 40;
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+  doc.setTextColor(...YELLOW);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text('Récapitulatif des déplacements', titleX, 13);
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text(`Période : ${periodLabel}`, titleX, 20);
+  if (filtersLabel) doc.text(filtersLabel, titleX, 25);
+  const generated = `Document généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+  doc.text(generated, W - M, 20, { align: 'right' });
+
+  // Tableau
+  const cols = [
+    { key: 'date', label: 'Date', w: 22 },
+    { key: 'cat', label: 'Catégorie', w: 24 },
+    { key: 'dest', label: 'Destination', w: 92 },
+    { key: 'veh', label: 'Véhicule', w: 24 },
+    { key: 'km', label: 'Distance A/R', w: 27, right: true },
+    { key: 'fuel', label: 'Carburant', w: 26, right: true },
+    { key: 'wear', label: 'Usure', w: 24, right: true },
+    { key: 'total', label: 'Total', w: 34, right: true },
+  ];
+  const tableW = cols.reduce((s, c) => s + c.w, 0);
+  const x0 = (W - tableW) / 2;
+  let y = 40;
+  const bottom = H - 16;
+
+  function drawHeader() {
+    doc.setFillColor(...YELLOW);
+    doc.rect(x0, y, tableW, 8, 'F');
+    doc.setTextColor(...BLACK);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    let x = x0;
+    cols.forEach((c) => {
+      doc.text(c.label, c.right ? x + c.w - 2 : x + 2, y + 5.4, {
+        align: c.right ? 'right' : 'left',
+      });
+      x += c.w;
+    });
+    y += 8;
+    doc.setFont('helvetica', 'normal');
+  }
+
+  drawHeader();
+
+  const totals = { km: 0, fuel: 0, wear: 0, total: 0 };
+
+  if (trips.length === 0) {
+    doc.setFontSize(10);
+    doc.setTextColor(120, 120, 120);
+    doc.text('Aucun déplacement sur cette période.', x0 + 2, y + 7);
+    y += 12;
+  }
+
+  trips.forEach((t, i) => {
+    const destLines = doc
+      .splitTextToSize(
+        `${t.tripName ? `${t.tripName} — ` : ''}${t.arrival}`,
+        cols[2].w - 4
+      )
+      .slice(0, 2);
+    const rowH = Math.max(7, destLines.length * 4.2 + 3);
+    if (y + rowH > bottom) {
+      doc.addPage();
+      y = 14;
+      drawHeader();
+    }
+    if (i % 2 === 1) {
+      doc.setFillColor(246, 244, 236);
+      doc.rect(x0, y, tableW, rowH, 'F');
+    }
+    totals.km += t.kmTotal;
+    totals.fuel += t.fuelCost || 0;
+    totals.wear += t.wearCost || 0;
+    totals.total += t.totalCost;
+    const values = {
+      date: formatDateShortFR(t.tripDate),
+      cat: t.category || '—',
+      dest: destLines,
+      veh: MINIBUS_LABELS[t.vehicle] || t.vehicle,
+      km: pdfKm(t.kmTotal),
+      fuel: t.fuelCost != null ? pdfMoney(t.fuelCost) : '—',
+      wear: t.wearCost != null ? pdfMoney(t.wearCost) : '—',
+      total: pdfMoney(t.totalCost),
+    };
+    doc.setTextColor(...BLACK);
+    doc.setFontSize(8.5);
+    let x = x0;
+    cols.forEach((c) => {
+      doc.setFont('helvetica', c.key === 'total' ? 'bold' : 'normal');
+      doc.text(values[c.key], c.right ? x + c.w - 2 : x + 2, y + 4.8, {
+        align: c.right ? 'right' : 'left',
+      });
+      x += c.w;
+    });
+    doc.setDrawColor(225, 222, 210);
+    doc.line(x0, y + rowH, x0 + tableW, y + rowH);
+    y += rowH;
+  });
+
+  // Ligne de total
+  if (y + 9 > bottom) {
+    doc.addPage();
+    y = 14;
+  }
+  doc.setFillColor(...BLACK);
+  doc.rect(x0, y, tableW, 9, 'F');
+  doc.setTextColor(...YELLOW);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.text(`TOTAL (${trips.length} déplacement${trips.length > 1 ? 's' : ''})`, x0 + 2, y + 6);
+  let xt = x0;
+  cols.forEach((c) => {
+    const v = { km: pdfKm(totals.km), fuel: pdfMoney(totals.fuel), wear: pdfMoney(totals.wear), total: pdfMoney(totals.total) }[c.key];
+    if (v) doc.text(v, xt + c.w - 2, y + 6, { align: 'right' });
+    xt += c.w;
+  });
+  y += 16;
+
+  // Récapitulatif financier
+  const boxH = 34;
+  if (y + boxH > bottom) {
+    doc.addPage();
+    y = 14;
+  }
+  doc.setDrawColor(...YELLOW);
+  doc.setLineWidth(0.8);
+  doc.rect(x0, y, 120, boxH);
+  doc.setLineWidth(0.2);
+  doc.setFillColor(...YELLOW);
+  doc.rect(x0, y, 120, 7, 'F');
+  doc.setTextColor(...BLACK);
+  doc.setFontSize(10);
+  doc.text('Récapitulatif financier', x0 + 3, y + 5);
+  const summary = [
+    ['Nombre de déplacements', String(trips.length)],
+    ['Kilométrage total', pdfKm(totals.km)],
+    ['Total carburant', pdfMoney(totals.fuel)],
+    ['Total usure', pdfMoney(totals.wear)],
+    ['Coût global', pdfMoney(totals.total)],
+  ];
+  summary.forEach(([label, value], i) => {
+    const ly = y + 12 + i * 4.8;
+    const last = i === summary.length - 1;
+    doc.setFont('helvetica', last ? 'bold' : 'normal');
+    doc.setFontSize(last ? 10 : 9);
+    doc.text(label, x0 + 3, ly);
+    doc.text(value, x0 + 117, ly, { align: 'right' });
+  });
+
+  // Bas de page sur chaque page
+  const pages = doc.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    doc.setPage(p);
+    doc.setFillColor(...BLACK);
+    doc.rect(0, H - 9, W, 9, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text('US Baumoise Rugby', M, H - 3.5);
+    doc.setTextColor(...YELLOW);
+    doc.text(`Saison ${seasonLabel}`, W / 2, H - 3.5, { align: 'center' });
+    doc.setTextColor(255, 255, 255);
+    doc.text(`Page ${p} / ${pages}`, W - M, H - 3.5, { align: 'right' });
+  }
+
+  return doc;
 }
 
 function MinibusPicker({ value, onChange, vehicles, fuelPrice }) {
@@ -6571,12 +7328,19 @@ function TripTypeToggle({ value, onChange }) {
   );
 }
 
-function TripCostBreakdown({ preview, fuelPrice, note }) {
+function TripCostBreakdown({ preview, fuelPrice, note, roundTrip }) {
   const rows = [
-    ['Distance totale', preview ? formatKm(preview.kmTotal) : '—'],
-    ['Coût carburant', preview ? formatCurrency(preview.fuelCost) : '—'],
-    ["Coût d'usure", preview ? formatCurrency(preview.wearCost) : '—'],
+    ['Distance aller', preview ? formatKm(preview.kmOneWay) : '—'],
   ];
+  if (roundTrip !== false) {
+    rows.push(['Distance retour', preview ? formatKm(preview.kmOneWay) : '—']);
+  }
+  rows.push(
+    ['Distance totale', preview ? formatKm(preview.kmTotal) : '—'],
+    ['Prix du gazole utilisé', formatFuelPrice(fuelPrice)],
+    ['Coût carburant', preview ? formatCurrency(preview.fuelCost) : '—'],
+    ["Coût d'usure", preview ? formatCurrency(preview.wearCost) : '—']
+  );
   return (
     <div
       style={{
@@ -7025,7 +7789,11 @@ function TripCalculator({ vehicles, fuelPrice, onSave }) {
         />
       </div>
       <TripTypeToggle value={roundTrip} onChange={setRoundTrip} />
-      <TripCostBreakdown preview={preview} fuelPrice={fuelPrice} />
+      <TripCostBreakdown
+        preview={preview}
+        fuelPrice={fuelPrice}
+        roundTrip={roundTrip}
+      />
       <div className="flex justify-end">
         <button
           className="btn-primary"
@@ -8210,6 +8978,23 @@ export default function MeleeApp() {
   const [minibusHistoryTab, setMinibusHistoryTab] =
     useState('trips');
 
+  const [tripsView, setTripsView] = useState('suivi');
+
+  const [viewingTrip, setViewingTrip] = useState(null);
+
+  const [tripFilters, setTripFilters] = useState({
+    period: 'all',
+    from: '',
+    to: '',
+    category: 'all',
+    vehicle: 'all',
+    search: '',
+  });
+
+  const [tripSortAsc, setTripSortAsc] = useState(false);
+
+  const [pdfBusy, setPdfBusy] = useState(false);
+
   const [openNavMenu, setOpenNavMenu] = useState(
     null
   );
@@ -8993,6 +9778,16 @@ export default function MeleeApp() {
         totalCost: Number(t.total_cost) || 0,
         reason: t.reason || '',
         driver: t.driver || '',
+        tripName: t.trip_name || '',
+        category: t.category || '',
+        purpose: t.purpose || '',
+        departureLat: num(t.departure_lat),
+        departureLon: num(t.departure_lon),
+        arrivalLat: num(t.arrival_lat),
+        arrivalLon: num(t.arrival_lon),
+        durationMin: num(t.duration_min),
+        routeSummary: t.route_summary || '',
+        distanceSource: t.distance_source || 'manual',
         createdBy: t.created_by || '',
         createdAt: t.created_at,
       }))
@@ -9017,6 +9812,16 @@ export default function MeleeApp() {
       total_cost: data.totalCost,
       reason: data.reason,
       driver: data.driver,
+      trip_name: data.tripName,
+      category: data.category,
+      purpose: data.purpose,
+      departure_lat: data.departureLat,
+      departure_lon: data.departureLon,
+      arrival_lat: data.arrivalLat,
+      arrival_lon: data.arrivalLon,
+      duration_min: data.durationMin,
+      route_summary: data.routeSummary,
+      distance_source: data.distanceSource,
     };
   }
 
@@ -9074,6 +9879,37 @@ export default function MeleeApp() {
       console.error(error);
       showToast('Impossible de supprimer le déplacement.');
     }
+  }
+
+  async function exportTripsPdf(trips, periodLabel, filtersLabel) {
+    setPdfBusy(true);
+    try {
+      const logo = await loadUsbLogo();
+      const seasons = [
+        ...new Set(trips.map((t) => seasonOf(t.tripDate))),
+      ].sort();
+      const seasonLabel = seasons.length
+        ? seasons.length === 1
+          ? seasons[0]
+          : `${seasons[0]} à ${seasons[seasons.length - 1]}`
+        : seasonOf(todayISO());
+      const doc = buildTripsPdf({
+        trips: [...trips].sort((a, b) =>
+          a.tripDate.localeCompare(b.tripDate)
+        ),
+        periodLabel,
+        filtersLabel,
+        seasonLabel,
+        logo,
+      });
+      doc.save(
+        `deplacements-us-baumoise-${sanitizeFileName(periodLabel)}.pdf`
+      );
+    } catch (error) {
+      console.error(error);
+      showToast("Impossible de générer le PDF.");
+    }
+    setPdfBusy(false);
   }
 
   async function saveVehicleParams(id, params) {
@@ -16128,34 +16964,6 @@ export default function MeleeApp() {
                   refreshAgeH == null ||
                   refreshAgeH > 30);
 
-              const months = [
-                ...new Set(
-                  minibusTrips.map((t) => t.tripDate.slice(0, 7))
-                ),
-              ];
-              const visibleTrips =
-                minibusMonthFilter === 'all'
-                  ? minibusTrips
-                  : minibusTrips.filter((t) =>
-                      t.tripDate.startsWith(minibusMonthFilter)
-                    );
-              const totals = MINIBUS_IDS.map((id) => {
-                const rows = visibleTrips.filter(
-                  (t) => t.vehicle === id
-                );
-                return {
-                  id,
-                  count: rows.length,
-                  km: rows.reduce((s, t) => s + t.kmTotal, 0),
-                  cost: rows.reduce((s, t) => s + t.totalCost, 0),
-                };
-              });
-              const totalKm = totals.reduce((s, t) => s + t.km, 0);
-              const totalCost = totals.reduce(
-                (s, t) => s + t.cost,
-                0
-              );
-
               const sourceLabel =
                 fuelSettings?.priceMode === 'station'
                   ? fuelSettings.stationName || 'Station de référence'
@@ -16179,6 +16987,139 @@ export default function MeleeApp() {
                 return h.details;
               };
 
+              /* ---- Filtres du suivi ---- */
+
+              const f = tripFilters;
+              const setF = (patch) =>
+                setTripFilters({ ...tripFilters, ...patch });
+              const seasons = [
+                ...new Set([
+                  seasonOf(todayISO()),
+                  ...minibusTrips.map((t) => seasonOf(t.tripDate)),
+                ]),
+              ].sort().reverse();
+              const months = [
+                ...new Set(
+                  minibusTrips.map((t) => t.tripDate.slice(0, 7))
+                ),
+              ].sort().reverse();
+              const monthLabel = (m) => {
+                const [y, mo] = m.split('-');
+                return `${capitalizeFirst(MONTHS_FR[Number(mo) - 1])} ${y}`;
+              };
+
+              const inPeriod = (t) => {
+                if (f.period === 'all') return true;
+                if (f.period.startsWith('season:'))
+                  return seasonOf(t.tripDate) === f.period.slice(7);
+                if (f.period.startsWith('month:'))
+                  return t.tripDate.startsWith(f.period.slice(6));
+                if (f.period === 'custom')
+                  return (
+                    (!f.from || t.tripDate >= f.from) &&
+                    (!f.to || t.tripDate <= f.to)
+                  );
+                return true;
+              };
+              const q = f.search.trim().toLowerCase();
+              const filteredTrips = minibusTrips
+                .filter(inPeriod)
+                .filter(
+                  (t) => f.category === 'all' || t.category === f.category
+                )
+                .filter(
+                  (t) => f.vehicle === 'all' || t.vehicle === f.vehicle
+                )
+                .filter(
+                  (t) =>
+                    !q ||
+                    `${t.arrival} ${t.tripName}`.toLowerCase().includes(q)
+                )
+                .sort((a, b) =>
+                  tripSortAsc
+                    ? a.tripDate.localeCompare(b.tripDate)
+                    : b.tripDate.localeCompare(a.tripDate)
+                );
+
+              const sum = (list, key) =>
+                list.reduce((s, t) => s + (Number(t[key]) || 0), 0);
+              const stats = {
+                count: filteredTrips.length,
+                km: sum(filteredTrips, 'kmTotal'),
+                fuel: sum(filteredTrips, 'fuelCost'),
+                wear: sum(filteredTrips, 'wearCost'),
+                total: sum(filteredTrips, 'totalCost'),
+              };
+
+              const periodLabel =
+                f.period === 'all'
+                  ? 'Toutes les dates'
+                  : f.period.startsWith('season:')
+                  ? `Saison ${f.period.slice(7)}`
+                  : f.period.startsWith('month:')
+                  ? monthLabel(f.period.slice(6))
+                  : `${f.from ? `Du ${formatDateShortFR(f.from)}` : 'Jusqu’'}${
+                      f.to ? ` au ${formatDateShortFR(f.to)}` : ' à aujourd’hui'
+                    }`;
+              const filtersLabel = [
+                f.category !== 'all' && `Catégorie : ${f.category}`,
+                f.vehicle !== 'all' &&
+                  `Véhicule : Minibus ${MINIBUS_LABELS[f.vehicle].toLowerCase()}`,
+                q && `Destination : « ${f.search.trim()} »`,
+              ]
+                .filter(Boolean)
+                .join(' · ');
+
+              // Récapitulatif annuel (par saison), selon les filtres
+              // catégorie / véhicule / recherche, sur toutes les dates.
+              const recapBase = minibusTrips
+                .filter(
+                  (t) => f.category === 'all' || t.category === f.category
+                )
+                .filter(
+                  (t) => f.vehicle === 'all' || t.vehicle === f.vehicle
+                )
+                .filter(
+                  (t) =>
+                    !q ||
+                    `${t.arrival} ${t.tripName}`.toLowerCase().includes(q)
+                );
+              const recap = [
+                ...new Set(recapBase.map((t) => seasonOf(t.tripDate))),
+              ]
+                .sort()
+                .reverse()
+                .map((season) => {
+                  const list = recapBase.filter(
+                    (t) => seasonOf(t.tripDate) === season
+                  );
+                  return {
+                    season,
+                    count: list.length,
+                    km: sum(list, 'kmTotal'),
+                    fuel: sum(list, 'fuelCost'),
+                    wear: sum(list, 'wearCost'),
+                    total: sum(list, 'totalCost'),
+                  };
+                });
+
+              const th = {
+                padding: '10px 10px',
+                textAlign: 'left',
+                fontWeight: 600,
+                fontSize: 12,
+                textTransform: 'uppercase',
+                letterSpacing: '0.03em',
+                whiteSpace: 'nowrap',
+              };
+              const td = {
+                padding: '9px 10px',
+                fontSize: 13,
+                borderBottom: '1px solid var(--line)',
+                verticalAlign: 'top',
+              };
+              const num = { textAlign: 'right', whiteSpace: 'nowrap' };
+
               return (
                 <div>
                   <div className="flex items-center justify-between flex-wrap gap-2">
@@ -16186,16 +17127,59 @@ export default function MeleeApp() {
                       Gestion des déplacements
                     </h1>
 
-                    {minibusReady && (
-                      <button
-                        className="btn-primary"
-                        onClick={() => setShowMinibusForm({})}
-                      >
-                        <Plus size={14} />
-                        Déplacement
-                      </button>
+                    {minibusReady && tripsView === 'suivi' && (
+                      <div className="flex gap-2 flex-wrap">
+                        <button
+                          className="btn-secondary"
+                          disabled={pdfBusy}
+                          onClick={() =>
+                            exportTripsPdf(
+                              filteredTrips,
+                              periodLabel,
+                              filtersLabel
+                            )
+                          }
+                        >
+                          {pdfBusy ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <FileDown size={14} />
+                          )}
+                          Exporter en PDF
+                        </button>
+                        <button
+                          className="btn-primary"
+                          onClick={() => setShowMinibusForm({})}
+                        >
+                          <Plus size={14} />
+                          Nouveau déplacement
+                        </button>
+                      </div>
                     )}
                   </div>
+
+                  {minibusReady && (
+                    <div className="flex gap-2 mt-3">
+                      {[
+                        ['suivi', 'Suivi des déplacements'],
+                        ['carburant', 'Carburant et véhicules'],
+                      ].map(([id, label]) => (
+                        <button
+                          key={id}
+                          className="btn-secondary"
+                          style={{
+                            background:
+                              tripsView === id ? 'var(--ink)' : 'var(--white)',
+                            color:
+                              tripsView === id ? 'var(--white)' : 'var(--ink)',
+                          }}
+                          onClick={() => setTripsView(id)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="pitch-divider" />
 
@@ -16207,6 +17191,293 @@ export default function MeleeApp() {
                       Les tables du minibus ne sont pas encore créées
                       dans Supabase.
                     </p>
+                  ) : tripsView === 'suivi' ? (
+                    <>
+                      {/* INDICATEURS */}
+
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                        <StatCard
+                          icon={Bus}
+                          label="Déplacements"
+                          value={stats.count}
+                        />
+                        <StatCard
+                          icon={TrendingUp}
+                          label="Kilomètres"
+                          value={formatKm(stats.km)}
+                        />
+                        <StatCard
+                          icon={Wallet}
+                          label="Carburant"
+                          value={formatCurrency(stats.fuel)}
+                        />
+                        <StatCard
+                          icon={Receipt}
+                          label="Coût total"
+                          value={formatCurrency(stats.total)}
+                        />
+                      </div>
+
+                      {/* FILTRES */}
+
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+                        <div>
+                          <label>Période</label>
+                          <select
+                            value={f.period}
+                            onChange={(e) => setF({ period: e.target.value })}
+                          >
+                            <option value="all">Toutes les dates</option>
+                            <optgroup label="Saison sportive">
+                              {seasons.map((se) => (
+                                <option key={se} value={`season:${se}`}>
+                                  Saison {se}
+                                </option>
+                              ))}
+                            </optgroup>
+                            {months.length > 0 && (
+                              <optgroup label="Mois">
+                                {months.map((m) => (
+                                  <option key={m} value={`month:${m}`}>
+                                    {monthLabel(m)}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            <option value="custom">Dates personnalisées…</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label>Catégorie</label>
+                          <select
+                            value={f.category}
+                            onChange={(e) => setF({ category: e.target.value })}
+                          >
+                            <option value="all">Toutes</option>
+                            {TRIP_CATEGORIES.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label>Véhicule</label>
+                          <select
+                            value={f.vehicle}
+                            onChange={(e) => setF({ vehicle: e.target.value })}
+                          >
+                            <option value="all">Les deux minibus</option>
+                            {MINIBUS_IDS.map((id) => (
+                              <option key={id} value={id}>
+                                Minibus {MINIBUS_LABELS[id].toLowerCase()}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label>Destination</label>
+                          <input
+                            value={f.search}
+                            onChange={(e) => setF({ search: e.target.value })}
+                            placeholder="Rechercher…"
+                          />
+                        </div>
+                      </div>
+
+                      {f.period === 'custom' && (
+                        <div className="grid grid-cols-2 gap-3 mt-3" style={{ maxWidth: 420 }}>
+                          <div>
+                            <label>Du</label>
+                            <input
+                              type="date"
+                              value={f.from}
+                              onChange={(e) => setF({ from: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <label>Au</label>
+                            <input
+                              type="date"
+                              value={f.to}
+                              onChange={(e) => setF({ to: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* TABLEAU DE SUIVI */}
+
+                      <div
+                        className="mt-4"
+                        style={{
+                          overflowX: 'auto',
+                          border: '1px solid var(--line)',
+                          borderRadius: 12,
+                          background: 'var(--white)',
+                        }}
+                      >
+                        <table style={{ width: '100%', minWidth: 820, borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ background: '#1A1A1A', color: '#E3B100' }}>
+                              <th style={th}>
+                                <button
+                                  type="button"
+                                  className="flex items-center gap-1"
+                                  style={{ color: 'inherit', fontWeight: 600, textTransform: 'uppercase' }}
+                                  onClick={() => setTripSortAsc(!tripSortAsc)}
+                                  title="Trier par date"
+                                >
+                                  Date {tripSortAsc ? '▲' : '▼'}
+                                </button>
+                              </th>
+                              <th style={th}>Catégorie</th>
+                              <th style={th}>Destination</th>
+                              <th style={th}>Véhicule</th>
+                              <th style={{ ...th, ...num }}>Distance A/R</th>
+                              <th style={{ ...th, ...num }}>Carburant</th>
+                              <th style={{ ...th, ...num }}>Usure</th>
+                              <th style={{ ...th, ...num }}>Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredTrips.length === 0 ? (
+                              <tr>
+                                <td
+                                  colSpan={8}
+                                  style={{ ...td, textAlign: 'center', color: 'var(--ink-light)', padding: 24 }}
+                                >
+                                  Aucun déplacement pour ces filtres.
+                                </td>
+                              </tr>
+                            ) : (
+                              filteredTrips.map((t, i) => (
+                                <tr
+                                  key={t.id}
+                                  onClick={() => setViewingTrip(t)}
+                                  style={{
+                                    cursor: 'pointer',
+                                    background: i % 2 ? '#FAF8F0' : 'transparent',
+                                  }}
+                                >
+                                  <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                                    {formatDateShortFR(t.tripDate)}
+                                  </td>
+                                  <td style={td}>
+                                    {t.category ? (
+                                      <span
+                                        className="text-xs font-semibold"
+                                        style={{
+                                          background: '#FFF3C4',
+                                          borderRadius: 6,
+                                          padding: '2px 8px',
+                                          whiteSpace: 'nowrap',
+                                        }}
+                                      >
+                                        {t.category}
+                                      </span>
+                                    ) : (
+                                      '—'
+                                    )}
+                                  </td>
+                                  <td style={td}>
+                                    <p className="font-medium">
+                                      {t.tripName || t.arrival}
+                                    </p>
+                                    {t.tripName && (
+                                      <p className="text-xs" style={{ color: 'var(--ink-light)' }}>
+                                        {t.arrival}
+                                      </p>
+                                    )}
+                                  </td>
+                                  <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                                    {MINIBUS_LABELS[t.vehicle] || t.vehicle}
+                                  </td>
+                                  <td style={{ ...td, ...num }}>
+                                    {formatKm(t.kmTotal)}
+                                  </td>
+                                  <td style={{ ...td, ...num }}>
+                                    {t.fuelCost != null ? formatCurrency(t.fuelCost) : '—'}
+                                  </td>
+                                  <td style={{ ...td, ...num }}>
+                                    {t.wearCost != null ? formatCurrency(t.wearCost) : '—'}
+                                  </td>
+                                  <td style={{ ...td, ...num, fontWeight: 700 }}>
+                                    {formatCurrency(t.totalCost)}
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                          {filteredTrips.length > 0 && (
+                            <tfoot>
+                              <tr style={{ background: '#1A1A1A', color: '#FFFFFF' }}>
+                                <td style={{ ...td, fontWeight: 700, borderBottom: 'none' }} colSpan={4}>
+                                  Total · {stats.count} déplacement{stats.count > 1 ? 's' : ''}
+                                </td>
+                                <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>
+                                  {formatKm(stats.km)}
+                                </td>
+                                <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>
+                                  {formatCurrency(stats.fuel)}
+                                </td>
+                                <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>
+                                  {formatCurrency(stats.wear)}
+                                </td>
+                                <td style={{ ...td, ...num, fontWeight: 700, color: '#E3B100', borderBottom: 'none' }}>
+                                  {formatCurrency(stats.total)}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          )}
+                        </table>
+                      </div>
+
+                      {/* RÉCAPITULATIF ANNUEL */}
+
+                      <div className="pitch-divider" />
+
+                      <h2 className="font-display text-lg">
+                        Récapitulatif annuel des dépenses de transport
+                      </h2>
+                      <p className="text-xs mb-2" style={{ color: 'var(--ink-light)' }}>
+                        Par saison sportive (juillet à juin)
+                        {filtersLabel ? ` · ${filtersLabel}` : ''}.
+                      </p>
+
+                      {recap.length === 0 ? (
+                        <p className="text-sm" style={{ color: 'var(--ink-light)' }}>
+                          Aucun déplacement enregistré.
+                        </p>
+                      ) : (
+                        <div style={{ overflowX: 'auto', border: '1px solid var(--line)', borderRadius: 12, background: 'var(--white)' }}>
+                          <table style={{ width: '100%', minWidth: 560, borderCollapse: 'collapse' }}>
+                            <thead>
+                              <tr style={{ background: '#FFF3C4' }}>
+                                <th style={th}>Saison</th>
+                                <th style={{ ...th, ...num }}>Déplacements</th>
+                                <th style={{ ...th, ...num }}>Kilomètres</th>
+                                <th style={{ ...th, ...num }}>Carburant</th>
+                                <th style={{ ...th, ...num }}>Usure</th>
+                                <th style={{ ...th, ...num }}>Total</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {recap.map((r) => (
+                                <tr key={r.season}>
+                                  <td style={{ ...td, fontWeight: 600 }}>{r.season}</td>
+                                  <td style={{ ...td, ...num }}>{r.count}</td>
+                                  <td style={{ ...td, ...num }}>{formatKm(r.km)}</td>
+                                  <td style={{ ...td, ...num }}>{formatCurrency(r.fuel)}</td>
+                                  <td style={{ ...td, ...num }}>{formatCurrency(r.wear)}</td>
+                                  <td style={{ ...td, ...num, fontWeight: 700 }}>{formatCurrency(r.total)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </>
                   ) : (
                     <>
                       {/* PRIX DU CARBURANT */}
@@ -16430,247 +17701,44 @@ export default function MeleeApp() {
 
                       <div className="pitch-divider" />
 
-                      {/* HISTORIQUE */}
+                      <h2 className="font-display text-lg">
+                        Historique des prix et des stations
+                      </h2>
 
-                      <div className="flex items-center justify-between flex-wrap gap-2">
-                        <h2 className="font-display text-lg">
-                          Historique
-                        </h2>
-                        <div className="flex gap-2">
-                          {[
-                            ['trips', 'Déplacements'],
-                            ['prices', 'Prix et stations'],
-                          ].map(([id, label]) => (
-                            <button
-                              key={id}
-                              className="btn-secondary"
+                      <div className="mt-2">
+                        {fuelHistory.length === 0 ? (
+                          <p
+                            className="text-sm"
+                            style={{ color: 'var(--ink-light)' }}
+                          >
+                            Aucun historique pour l'instant.
+                          </p>
+                        ) : (
+                          fuelHistory.map((h) => (
+                            <div
+                              key={h.id}
+                              className="py-2"
                               style={{
-                                background:
-                                  minibusHistoryTab === id
-                                    ? 'var(--ink)'
-                                    : 'var(--white)',
-                                color:
-                                  minibusHistoryTab === id
-                                    ? 'var(--white)'
-                                    : 'var(--ink)',
+                                borderBottom: '1px solid var(--line)',
                               }}
-                              onClick={() =>
-                                setMinibusHistoryTab(id)
-                              }
                             >
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {minibusHistoryTab === 'prices' ? (
-                        <div className="mt-3">
-                          {fuelHistory.length === 0 ? (
-                            <p
-                              className="text-sm"
-                              style={{ color: 'var(--ink-light)' }}
-                            >
-                              Aucun historique pour l'instant.
-                            </p>
-                          ) : (
-                            fuelHistory.map((h) => (
-                              <div
-                                key={h.id}
-                                className="flex items-center justify-between gap-3 py-2"
-                                style={{
-                                  borderBottom:
-                                    '1px solid var(--line)',
-                                }}
-                              >
-                                <div className="min-w-0">
-                                  <p className="text-sm">
-                                    {historyLabel(h)}
-                                  </p>
-                                  <p
-                                    className="text-xs"
-                                    style={{
-                                      color: 'var(--ink-light)',
-                                    }}
-                                  >
-                                    {formatDateTimeFR(h.createdAt)}
-                                    {h.createdBy
-                                      ? ` · ${h.createdBy}`
-                                      : ' · automatique'}
-                                    {h.kind === 'price' && h.details
-                                      ? ` · ${h.details}`
-                                      : ''}
-                                  </p>
-                                </div>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      ) : (
-                        <>
-                          {months.length > 0 && (
-                            <div className="mt-3 mb-3">
-                              <label>Période</label>
-                              <select
-                                style={{ width: 'auto' }}
-                                value={minibusMonthFilter}
-                                onChange={(e) =>
-                                  setMinibusMonthFilter(
-                                    e.target.value
-                                  )
-                                }
-                              >
-                                <option value="all">
-                                  Toute la période
-                                </option>
-                                {months.map((m) => {
-                                  const [y, mo] = m.split('-');
-                                  return (
-                                    <option key={m} value={m}>
-                                      {capitalizeFirst(
-                                        MONTHS_FR[Number(mo) - 1]
-                                      )}{' '}
-                                      {y}
-                                    </option>
-                                  );
-                                })}
-                              </select>
-                            </div>
-                          )}
-
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-                            {totals.map((t) => (
-                              <StatCard
-                                key={t.id}
-                                icon={Bus}
-                                label={`${MINIBUS_LABELS[t.id]} · ${
-                                  t.count
-                                } · ${formatKm(t.km)}`}
-                                value={formatCurrency(t.cost)}
-                              />
-                            ))}
-                            <StatCard
-                              icon={Wallet}
-                              label={`Total · ${
-                                visibleTrips.length
-                              } · ${formatKm(totalKm)}`}
-                              value={formatCurrency(totalCost)}
-                            />
-                          </div>
-
-                          <div className="mt-3">
-                            {visibleTrips.length === 0 ? (
+                              <p className="text-sm">{historyLabel(h)}</p>
                               <p
-                                className="text-sm"
-                                style={{
-                                  color: 'var(--ink-light)',
-                                }}
+                                className="text-xs"
+                                style={{ color: 'var(--ink-light)' }}
                               >
-                                Aucun déplacement pour l'instant.
+                                {formatDateTimeFR(h.createdAt)}
+                                {h.createdBy
+                                  ? ` · ${h.createdBy}`
+                                  : ' · automatique'}
+                                {h.kind === 'price' && h.details
+                                  ? ` · ${h.details}`
+                                  : ''}
                               </p>
-                            ) : (
-                              visibleTrips.map((trip) => (
-                                <div
-                                  key={trip.id}
-                                  className="flex items-center gap-3 py-2"
-                                  style={{
-                                    borderBottom:
-                                      '1px solid var(--line)',
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      width: 34,
-                                      height: 34,
-                                      borderRadius: 8,
-                                      background: 'var(--red-tint)',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      flexShrink: 0,
-                                    }}
-                                  >
-                                    <Bus size={16} />
-                                  </div>
-
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium truncate">
-                                      {trip.departure}{' '}
-                                      {trip.roundTrip ? '⇄' : '→'}{' '}
-                                      {trip.arrival}
-                                    </p>
-                                    <p
-                                      className="text-xs mt-1"
-                                      style={{
-                                        color: 'var(--ink-light)',
-                                      }}
-                                    >
-                                      {formatDateFR(trip.tripDate)}{' '}
-                                      {trip.tripDate.slice(0, 4)} ·{' '}
-                                      {MINIBUS_LABELS[trip.vehicle]} ·{' '}
-                                      {formatKm(trip.kmTotal)}
-                                      {trip.roundTrip
-                                        ? ' (A/R)'
-                                        : ''}
-                                      {trip.fuelCost != null
-                                        ? ` · carburant ${formatCurrency(
-                                            trip.fuelCost
-                                          )} + usure ${formatCurrency(
-                                            trip.wearCost
-                                          )}`
-                                        : ''}
-                                      {trip.fuelPrice != null
-                                        ? ` · gazole ${formatFuelPrice(
-                                            trip.fuelPrice
-                                          )}`
-                                        : ''}
-                                      {trip.reason
-                                        ? ` · ${trip.reason}`
-                                        : ''}
-                                      {trip.driver
-                                        ? ` · ${trip.driver}`
-                                        : ''}
-                                    </p>
-                                  </div>
-
-                                  <strong className="text-sm">
-                                    {formatCurrency(trip.totalCost)}
-                                  </strong>
-
-                                  <button
-                                    className="icon-btn"
-                                    onClick={() =>
-                                      setShowMinibusForm({
-                                        existing: trip,
-                                      })
-                                    }
-                                  >
-                                    <Pencil size={14} />
-                                  </button>
-
-                                  <button
-                                    className="icon-btn"
-                                    onClick={() =>
-                                      setConfirmState({
-                                        message:
-                                          'Supprimer ce déplacement ?',
-                                        onConfirm: async () => {
-                                          await deleteMinibusTrip(
-                                            trip.id
-                                          );
-                                          setConfirmState(null);
-                                        },
-                                      })
-                                    }
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        </>
-                      )}
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </>
                   )}
                 </div>
@@ -18958,7 +20026,9 @@ export default function MeleeApp() {
 
       {showMinibusForm && (
         <MinibusTripFormModal
+          key={showMinibusForm.existing?.id || showMinibusForm.duplicateFrom?.id || 'new'}
           existing={showMinibusForm.existing || null}
+          duplicateFrom={showMinibusForm.duplicateFrom || null}
           initial={showMinibusForm.initial || null}
           vehicles={minibusVehicles}
           fuelPrice={fuelSettings?.currentPrice ?? null}
@@ -18971,6 +20041,36 @@ export default function MeleeApp() {
               : createMinibusTrip(data)
           }
           onCancel={() => setShowMinibusForm(null)}
+        />
+      )}
+
+      {/* DÉTAIL D'UN DÉPLACEMENT */}
+
+      {viewingTrip && (
+        <TripDetailModal
+          trip={viewingTrip}
+          onCancel={() => setViewingTrip(null)}
+          onEdit={() => {
+            setShowMinibusForm({ existing: viewingTrip });
+            setViewingTrip(null);
+          }}
+          onDuplicate={() => {
+            setShowMinibusForm({ duplicateFrom: viewingTrip });
+            setViewingTrip(null);
+          }}
+          onDelete={() => {
+            const trip = viewingTrip;
+            setConfirmState({
+              message: `Supprimer le déplacement « ${
+                trip.tripName || trip.arrival
+              } » ? Cette action est définitive.`,
+              onConfirm: async () => {
+                await deleteMinibusTrip(trip.id);
+                setConfirmState(null);
+                setViewingTrip(null);
+              },
+            });
+          }}
         />
       )}
 
