@@ -16264,7 +16264,14 @@ export default function MeleeApp() {
                                 >
                                   Tarif du{' '}
                                   {formatDateTimeFR(
-                                    fuelSettings?.priceDate
+                                    fuelSettings?.priceDate &&
+                                      fuelSettings?.lastRefreshAt &&
+                                      new Date(fuelSettings.priceDate) >
+                                        new Date(
+                                          fuelSettings.lastRefreshAt
+                                        )
+                                      ? fuelSettings.lastRefreshAt
+                                      : fuelSettings?.priceDate
                                   )}{' '}
                                   · Dernière actualisation :{' '}
                                   {formatDateTimeFR(

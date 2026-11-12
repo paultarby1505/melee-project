@@ -210,7 +210,7 @@ begin
       -- Moyenne nationale des prix du gazole mis à jour ces 7 derniers jours.
       v_body := public.fuel_api_get(
         'select=' || extensions.urlencode('avg(gazole_prix) as prix, max(gazole_maj) as maj, count(*) as nb')
-        || '&where=' || extensions.urlencode('gazole_prix is not null and gazole_maj >= now(days=-7)')
+        || '&where=' || extensions.urlencode('gazole_prix is not null and gazole_maj >= now(days=-7) and gazole_maj <= now()')
       );
       v_rec := v_body -> 'results' -> 0;
       v_price := public.fuel_normalize_price((v_rec ->> 'prix')::numeric);
