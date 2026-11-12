@@ -58,6 +58,7 @@ import {
   Users,
   FileDown,
   UserCog,
+  Bus,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { jsPDF } from 'jspdf';
@@ -174,6 +175,7 @@ const NAV_ITEMS = [
   },
   { id: 'docs', label: 'Documents', icon: FileText },
   { id: 'finance', label: 'Finance', icon: Wallet },
+  { id: 'minibus', label: 'Minibus', icon: Bus },
   {
     id: 'edr',
     label: 'EDR',
@@ -6013,6 +6015,501 @@ function TransactionFormModal({
 }
 
 /* =========================================================
+   MINIBUS
+========================================================= */
+
+const MINIBUS_IDS = ['ancien', 'recent'];
+
+const MINIBUS_LABELS = {
+  ancien: 'Ancien',
+  recent: 'Récent',
+};
+
+function roundKm(km) {
+  return Math.round(km * 10) / 10;
+}
+
+function computeMinibusTrip(kmOneWay, roundTrip, costPerKm) {
+  const oneWay = roundKm(Math.max(0, kmOneWay || 0));
+  const total = roundKm(roundTrip ? oneWay * 2 : oneWay);
+  const cost =
+    Math.round(total * Math.max(0, costPerKm || 0) * 100) / 100;
+  return { kmOneWay: oneWay, kmTotal: total, totalCost: cost };
+}
+
+function formatKm(km) {
+  return `${(Number(km) || 0).toLocaleString('fr-FR', {
+    maximumFractionDigits: 1,
+  })} km`;
+}
+
+/*
+  Distance routière en voiture entre deux lieux, sans clé d'API :
+  géocodage + itinéraire de la Géoplateforme IGN (service public),
+  avec Nominatim / OSRM (OpenStreetMap) en secours.
+*/
+
+async function fetchJsonWithTimeout(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function geocodePlace(query) {
+  try {
+    const data = await fetchJsonWithTimeout(
+      `https://data.geopf.fr/geocodage/search?q=${encodeURIComponent(
+        query
+      )}&limit=1`
+    );
+    const f = data?.features?.[0];
+    const c = f?.geometry?.coordinates;
+    if (c) {
+      return {
+        lon: c[0],
+        lat: c[1],
+        label: f.properties?.label || query,
+      };
+    }
+  } catch (e) {
+    console.warn('Géocodage IGN indisponible', e);
+  }
+
+  try {
+    const data = await fetchJsonWithTimeout(
+      `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(
+        query
+      )}`
+    );
+    const r = data?.[0];
+    if (r?.lon && r?.lat) {
+      return {
+        lon: Number(r.lon),
+        lat: Number(r.lat),
+        label: r.display_name || query,
+      };
+    }
+  } catch (e) {
+    console.warn('Géocodage OSM indisponible', e);
+  }
+
+  return null;
+}
+
+async function computeRoadDistanceKm(departure, arrival) {
+  const [a, b] = await Promise.all([
+    geocodePlace(departure),
+    geocodePlace(arrival),
+  ]);
+
+  if (!a) {
+    return { error: `Lieu de départ introuvable : « ${departure} ».` };
+  }
+  if (!b) {
+    return { error: `Lieu d'arrivée introuvable : « ${arrival} ».` };
+  }
+
+  let km = null;
+
+  try {
+    const data = await fetchJsonWithTimeout(
+      'https://data.geopf.fr/navigation/itineraire?resource=bdtopo-osrm&profile=car' +
+        '&optimization=fastest&distanceUnit=kilometer&getSteps=false' +
+        `&start=${a.lon},${a.lat}&end=${b.lon},${b.lat}`
+    );
+    if (typeof data?.distance === 'number') km = data.distance;
+  } catch (e) {
+    console.warn('Itinéraire IGN indisponible', e);
+  }
+
+  if (km === null) {
+    try {
+      const data = await fetchJsonWithTimeout(
+        `https://router.project-osrm.org/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}?overview=false`
+      );
+      const meters = data?.routes?.[0]?.distance;
+      if (typeof meters === 'number') km = meters / 1000;
+    } catch (e) {
+      console.warn('Itinéraire OSRM indisponible', e);
+    }
+  }
+
+  if (km === null) {
+    return {
+      error:
+        "Impossible de calculer l'itinéraire pour le moment. Saisis les km à la main.",
+    };
+  }
+
+  return {
+    km: roundKm(km),
+    departureLabel: a.label,
+    arrivalLabel: b.label,
+  };
+}
+
+function MinibusTripFormModal({
+  existing,
+  vehicles,
+  onSubmit,
+  onCancel,
+}) {
+  const [vehicle, setVehicle] = useState(
+    existing?.vehicle || 'recent'
+  );
+  const [tripDate, setTripDate] = useState(
+    existing?.tripDate || todayISO()
+  );
+  const [departure, setDeparture] = useState(
+    existing?.departure || ''
+  );
+  const [arrival, setArrival] = useState(
+    existing?.arrival || ''
+  );
+  const [roundTrip, setRoundTrip] = useState(
+    existing ? existing.roundTrip : true
+  );
+  const [kmOneWay, setKmOneWay] = useState(
+    existing ? String(existing.kmOneWay) : ''
+  );
+  const [reason, setReason] = useState(
+    existing?.reason || ''
+  );
+  const [driver, setDriver] = useState(
+    existing?.driver || ''
+  );
+  const [calcBusy, setCalcBusy] = useState(false);
+  const [calcInfo, setCalcInfo] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  // Un trajet déjà saisi garde le tarif appliqué à l'époque, tant
+  // qu'on ne change pas de minibus.
+  const currentRate =
+    vehicles.find((v) => v.id === vehicle)?.costPerKm || 0;
+  const rate =
+    existing && existing.vehicle === vehicle
+      ? existing.costPerKm
+      : currentRate;
+
+  const km = Number(String(kmOneWay).replace(',', '.'));
+  const preview =
+    Number.isFinite(km) && km > 0
+      ? computeMinibusTrip(km, roundTrip, rate)
+      : null;
+
+  async function calculate() {
+    if (!departure.trim() || !arrival.trim()) {
+      setCalcInfo({
+        ok: false,
+        text: "Indique un départ et une arrivée.",
+      });
+      return;
+    }
+    setCalcBusy(true);
+    setCalcInfo(null);
+    const res = await computeRoadDistanceKm(
+      departure.trim(),
+      arrival.trim()
+    );
+    setCalcBusy(false);
+    if (res.error) {
+      setCalcInfo({ ok: false, text: res.error });
+    } else {
+      setKmOneWay(String(res.km));
+      setCalcInfo({
+        ok: true,
+        text: `${formatKm(res.km)} (aller) : ${res.departureLabel} → ${res.arrivalLabel}`,
+      });
+    }
+  }
+
+  async function submit() {
+    if (!departure.trim() || !arrival.trim()) {
+      setError("Le départ et l'arrivée sont obligatoires.");
+      return;
+    }
+    if (!tripDate) {
+      setError('La date est obligatoire.');
+      return;
+    }
+    if (!preview) {
+      setError(
+        'Indique les kilomètres (bouton « Calculer » ou saisie manuelle).'
+      );
+      return;
+    }
+
+    setBusy(true);
+    await onSubmit({
+      vehicle,
+      tripDate,
+      departure: departure.trim(),
+      arrival: arrival.trim(),
+      roundTrip,
+      costPerKm: rate,
+      ...preview,
+      reason: reason.trim(),
+      driver: driver.trim(),
+    });
+    setBusy(false);
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          style={{ position: 'absolute', top: 14, right: 14 }}
+          onClick={onCancel}
+        >
+          <X size={14} />
+        </button>
+
+        <h3 className="font-display text-lg">
+          {existing ? 'Modifier le trajet' : 'Nouveau trajet minibus'}
+        </h3>
+
+        <div
+          className="mt-4"
+          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+        >
+          <div>
+            <label>Minibus utilisé</label>
+            <div className="flex gap-2">
+              {MINIBUS_IDS.map((id) => {
+                const active = vehicle === id;
+                const v = vehicles.find((x) => x.id === id);
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    className="btn-secondary"
+                    style={{
+                      flex: 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 2,
+                      background: active ? 'var(--ink)' : 'var(--white)',
+                      color: active ? 'var(--white)' : 'var(--ink)',
+                    }}
+                    onClick={() => setVehicle(id)}
+                  >
+                    <span className="flex items-center gap-1">
+                      <Bus size={14} />
+                      {MINIBUS_LABELS[id]}
+                    </span>
+                    <span className="text-xs" style={{ opacity: 0.75 }}>
+                      {v
+                        ? `${formatCurrency(v.costPerKm)} / km`
+                        : 'Tarif non défini'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label>Date du trajet</label>
+            <input
+              type="date"
+              value={tripDate}
+              onChange={(e) => setTripDate(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label>Départ</label>
+              <input
+                value={departure}
+                onChange={(e) => setDeparture(e.target.value)}
+                placeholder="Ex. Baume-les-Dames"
+              />
+            </div>
+            <div>
+              <label>Arrivée</label>
+              <input
+                value={arrival}
+                onChange={(e) => setArrival(e.target.value)}
+                placeholder="Ex. Besançon"
+              />
+            </div>
+          </div>
+
+          <label
+            className="flex items-center gap-2 text-sm"
+            style={{ cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              style={{ width: 'auto' }}
+              checked={roundTrip}
+              onChange={(e) => setRoundTrip(e.target.checked)}
+            />
+            Aller-retour
+          </label>
+
+          <div>
+            <label>Kilomètres (aller simple)</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={kmOneWay}
+                onChange={(e) => setKmOneWay(e.target.value)}
+                placeholder="Calcul auto ou saisie"
+              />
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={calculate}
+                disabled={calcBusy}
+                style={{ flexShrink: 0 }}
+              >
+                {calcBusy ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={14} />
+                )}
+                Calculer
+              </button>
+            </div>
+            {calcInfo && (
+              <p
+                className="text-xs mt-1"
+                style={{
+                  color: calcInfo.ok ? 'var(--ink-light)' : 'var(--red)',
+                }}
+              >
+                {calcInfo.text}
+              </p>
+            )}
+          </div>
+
+          <div
+            style={{
+              border: '1px solid var(--line)',
+              borderRadius: 8,
+              padding: 12,
+            }}
+          >
+            <div className="flex justify-between text-sm">
+              <span>Distance totale</span>
+              <strong>{preview ? formatKm(preview.kmTotal) : '—'}</strong>
+            </div>
+            <div className="flex justify-between text-sm mt-1">
+              <span>Coût ({formatCurrency(rate)} / km)</span>
+              <strong>
+                {preview ? formatCurrency(preview.totalCost) : '—'}
+              </strong>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label>Motif (optionnel)</label>
+              <input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Ex. Tournoi U12"
+              />
+            </div>
+            <div>
+              <label>Conducteur (optionnel)</label>
+              <input
+                value={driver}
+                onChange={(e) => setDriver(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {error && (
+            <p className="text-xs" style={{ color: 'var(--red)' }}>
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button className="btn-secondary" onClick={onCancel}>
+            Annuler
+          </button>
+          <button
+            className="btn-primary"
+            onClick={submit}
+            disabled={busy}
+          >
+            {busy ? 'Enregistrement…' : 'Enregistrer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MinibusRatesForm({ vehicles, onSave }) {
+  const [rates, setRates] = useState(() =>
+    Object.fromEntries(
+      MINIBUS_IDS.map((id) => [
+        id,
+        String(vehicles.find((v) => v.id === id)?.costPerKm ?? ''),
+      ])
+    )
+  );
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    const parsed = {};
+    for (const id of MINIBUS_IDS) {
+      const n = Number(String(rates[id]).replace(',', '.'));
+      if (!Number.isFinite(n) || n < 0) return;
+      parsed[id] = n;
+    }
+    setBusy(true);
+    await onSave(parsed);
+    setBusy(false);
+  }
+
+  return (
+    <div className="flex items-end gap-3 flex-wrap">
+      {MINIBUS_IDS.map((id) => (
+        <div key={id}>
+          <label>Minibus {MINIBUS_LABELS[id].toLowerCase()} (€ / km)</label>
+          <input
+            type="text"
+            inputMode="decimal"
+            style={{ width: 140 }}
+            value={rates[id]}
+            onChange={(e) =>
+              setRates({ ...rates, [id]: e.target.value })
+            }
+          />
+        </div>
+      ))}
+      <button className="btn-secondary" onClick={save} disabled={busy}>
+        <Check size={14} />
+        {busy ? 'Enregistrement…' : 'Enregistrer les tarifs'}
+      </button>
+    </div>
+  );
+}
+
+/* =========================================================
    CANVAS DE WORKFLOW
 ========================================================= */
 
@@ -7148,6 +7645,20 @@ export default function MeleeApp() {
   const [financeProjectFilter, setFinanceProjectFilter] =
     useState('all');
 
+  const [minibusTrips, setMinibusTrips] = useState([]);
+
+  const [minibusVehicles, setMinibusVehicles] =
+    useState([]);
+
+  const [minibusReady, setMinibusReady] =
+    useState(true);
+
+  const [showMinibusForm, setShowMinibusForm] =
+    useState(null);
+
+  const [minibusMonthFilter, setMinibusMonthFilter] =
+    useState('all');
+
   const [openNavMenu, setOpenNavMenu] = useState(
     null
   );
@@ -7809,6 +8320,8 @@ export default function MeleeApp() {
         )
       );
 
+      await loadMinibus();
+
       setLastSync(new Date());
     } catch (error) {
       console.error(error);
@@ -7816,6 +8329,155 @@ export default function MeleeApp() {
       showToast(
         "Impossible de charger les données Supabase."
       );
+    }
+  }
+
+  /* =====================================================
+     MINIBUS
+  ===================================================== */
+
+  // Chargé à part : si les tables minibus n'existent pas encore,
+  // le reste de l'application continue de fonctionner.
+  async function loadMinibus() {
+    const [tripsResult, vehiclesResult] =
+      await Promise.all([
+        supabase
+          .from('minibus_trips')
+          .select('*')
+          .order('trip_date', { ascending: false })
+          .order('created_at', { ascending: false }),
+        supabase.from('minibus_vehicles').select('*'),
+      ]);
+
+    if (tripsResult.error || vehiclesResult.error) {
+      console.error(
+        tripsResult.error || vehiclesResult.error
+      );
+      setMinibusReady(false);
+      return;
+    }
+
+    setMinibusReady(true);
+
+    setMinibusVehicles(
+      (vehiclesResult.data || []).map((v) => ({
+        id: v.id,
+        name: v.name,
+        costPerKm: Number(v.cost_per_km) || 0,
+      }))
+    );
+
+    setMinibusTrips(
+      (tripsResult.data || []).map((t) => ({
+        id: t.id,
+        tripDate: t.trip_date,
+        vehicle: t.vehicle,
+        departure: t.departure,
+        arrival: t.arrival,
+        roundTrip: !!t.round_trip,
+        kmOneWay: Number(t.km_one_way) || 0,
+        kmTotal: Number(t.km_total) || 0,
+        costPerKm: Number(t.cost_per_km) || 0,
+        totalCost: Number(t.total_cost) || 0,
+        reason: t.reason || '',
+        driver: t.driver || '',
+        createdBy: t.created_by || '',
+        createdAt: t.created_at,
+      }))
+    );
+  }
+
+  function minibusRow(data) {
+    return {
+      trip_date: data.tripDate,
+      vehicle: data.vehicle,
+      departure: data.departure,
+      arrival: data.arrival,
+      round_trip: data.roundTrip,
+      km_one_way: data.kmOneWay,
+      km_total: data.kmTotal,
+      cost_per_km: data.costPerKm,
+      total_cost: data.totalCost,
+      reason: data.reason,
+      driver: data.driver,
+    };
+  }
+
+  async function createMinibusTrip(data) {
+    try {
+      const { error } = await supabase
+        .from('minibus_trips')
+        .insert({
+          id: genId(),
+          ...minibusRow(data),
+          created_by: session.displayName,
+        });
+
+      if (error) throw error;
+
+      await loadMinibus();
+      setShowMinibusForm(null);
+      showToast('Trajet enregistré.');
+    } catch (error) {
+      console.error(error);
+      showToast("Impossible d'enregistrer le trajet.");
+    }
+  }
+
+  async function updateMinibusTrip(id, data) {
+    try {
+      const { error } = await supabase
+        .from('minibus_trips')
+        .update(minibusRow(data))
+        .eq('id', id);
+
+      if (error) throw error;
+
+      await loadMinibus();
+      setShowMinibusForm(null);
+      showToast('Trajet mis à jour.');
+    } catch (error) {
+      console.error(error);
+      showToast('Impossible de modifier le trajet.');
+    }
+  }
+
+  async function deleteMinibusTrip(id) {
+    try {
+      const { error } = await supabase
+        .from('minibus_trips')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      await loadMinibus();
+      showToast('Trajet supprimé.');
+    } catch (error) {
+      console.error(error);
+      showToast('Impossible de supprimer le trajet.');
+    }
+  }
+
+  async function saveMinibusRates(rates) {
+    try {
+      for (const id of MINIBUS_IDS) {
+        const { error } = await supabase
+          .from('minibus_vehicles')
+          .update({
+            cost_per_km: rates[id],
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', id);
+
+        if (error) throw error;
+      }
+
+      await loadMinibus();
+      showToast('Tarifs enregistrés.');
+    } catch (error) {
+      console.error(error);
+      showToast("Impossible d'enregistrer les tarifs.");
     }
   }
 
@@ -14725,6 +15387,260 @@ export default function MeleeApp() {
               </div>
             )}
 
+            {/* MINIBUS */}
+
+            {activeTab === 'minibus' && (() => {
+              const months = [
+                ...new Set(
+                  minibusTrips.map((t) =>
+                    t.tripDate.slice(0, 7)
+                  )
+                ),
+              ];
+              const visibleTrips =
+                minibusMonthFilter === 'all'
+                  ? minibusTrips
+                  : minibusTrips.filter((t) =>
+                      t.tripDate.startsWith(
+                        minibusMonthFilter
+                      )
+                    );
+              const totals = MINIBUS_IDS.map((id) => {
+                const rows = visibleTrips.filter(
+                  (t) => t.vehicle === id
+                );
+                return {
+                  id,
+                  count: rows.length,
+                  km: rows.reduce((s, t) => s + t.kmTotal, 0),
+                  cost: rows.reduce((s, t) => s + t.totalCost, 0),
+                };
+              });
+              const totalKm = totals.reduce((s, t) => s + t.km, 0);
+              const totalCost = totals.reduce((s, t) => s + t.cost, 0);
+
+              return (
+                <div>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <h1 className="font-display text-2xl">
+                      Minibus
+                    </h1>
+
+                    {minibusReady && (
+                      <button
+                        className="btn-primary"
+                        onClick={() =>
+                          setShowMinibusForm({})
+                        }
+                      >
+                        <Plus size={14} />
+                        Trajet
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="pitch-divider" />
+
+                  {!minibusReady ? (
+                    <p
+                      className="text-sm"
+                      style={{ color: 'var(--red)' }}
+                    >
+                      Les tables du minibus ne sont pas encore
+                      créées dans Supabase (fichier
+                      supabase/minibus.sql).
+                    </p>
+                  ) : (
+                    <>
+                      {months.length > 0 && (
+                        <div className="mb-4">
+                          <label>Période</label>
+                          <select
+                            style={{ width: 'auto' }}
+                            value={minibusMonthFilter}
+                            onChange={(e) =>
+                              setMinibusMonthFilter(
+                                e.target.value
+                              )
+                            }
+                          >
+                            <option value="all">
+                              Tous les trajets
+                            </option>
+                            {months.map((m) => {
+                              const [y, mo] = m.split('-');
+                              return (
+                                <option key={m} value={m}>
+                                  {capitalizeFirst(
+                                    MONTHS_FR[Number(mo) - 1]
+                                  )}{' '}
+                                  {y}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {totals.map((t) => (
+                          <StatCard
+                            key={t.id}
+                            icon={Bus}
+                            label={`${MINIBUS_LABELS[t.id]} · ${t.count} trajet${
+                              t.count > 1 ? 's' : ''
+                            } · ${formatKm(t.km)}`}
+                            value={formatCurrency(t.cost)}
+                          />
+                        ))}
+                        <StatCard
+                          icon={Wallet}
+                          label={`Total · ${visibleTrips.length} trajet${
+                            visibleTrips.length > 1 ? 's' : ''
+                          } · ${formatKm(totalKm)}`}
+                          value={formatCurrency(totalCost)}
+                        />
+                      </div>
+
+                      <div className="pitch-divider" />
+
+                      <h2 className="font-display text-lg">
+                        Trajets
+                      </h2>
+
+                      {visibleTrips.length === 0 ? (
+                        <p
+                          className="text-sm"
+                          style={{
+                            color: 'var(--ink-light)',
+                          }}
+                        >
+                          Aucun trajet pour l'instant.
+                        </p>
+                      ) : (
+                        visibleTrips.map((trip) => (
+                          <div
+                            key={trip.id}
+                            className="flex items-center gap-3 py-2"
+                            style={{
+                              borderBottom:
+                                '1px solid var(--line)',
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: 34,
+                                height: 34,
+                                borderRadius: 8,
+                                background: 'var(--red-tint)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexShrink: 0,
+                              }}
+                            >
+                              <Bus size={16} />
+                            </div>
+
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">
+                                {trip.departure}{' '}
+                                {trip.roundTrip ? '⇄' : '→'}{' '}
+                                {trip.arrival}
+                              </p>
+                              <p
+                                className="text-xs mt-1"
+                                style={{
+                                  color: 'var(--ink-light)',
+                                }}
+                              >
+                                {formatDateFR(trip.tripDate)} ·
+                                Minibus{' '}
+                                {MINIBUS_LABELS[
+                                  trip.vehicle
+                                ]?.toLowerCase()}{' '}
+                                ·{' '}
+                                {trip.roundTrip
+                                  ? 'aller-retour'
+                                  : 'aller simple'}{' '}
+                                · {formatKm(trip.kmTotal)} ×{' '}
+                                {formatCurrency(trip.costPerKm)}
+                                {trip.reason
+                                  ? ` · ${trip.reason}`
+                                  : ''}
+                                {trip.driver
+                                  ? ` · ${trip.driver}`
+                                  : ''}
+                              </p>
+                            </div>
+
+                            <strong className="text-sm">
+                              {formatCurrency(trip.totalCost)}
+                            </strong>
+
+                            <button
+                              className="icon-btn"
+                              onClick={() =>
+                                setShowMinibusForm({
+                                  existing: trip,
+                                })
+                              }
+                            >
+                              <Pencil size={14} />
+                            </button>
+
+                            <button
+                              className="icon-btn"
+                              onClick={() =>
+                                setConfirmState({
+                                  message:
+                                    'Supprimer ce trajet ?',
+                                  onConfirm: async () => {
+                                    await deleteMinibusTrip(
+                                      trip.id
+                                    );
+                                    setConfirmState(null);
+                                  },
+                                })
+                              }
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))
+                      )}
+
+                      <div className="pitch-divider" />
+
+                      <h2 className="font-display text-lg">
+                        Tarif au kilomètre
+                      </h2>
+                      <p
+                        className="text-xs mb-2"
+                        style={{
+                          color: 'var(--ink-light)',
+                        }}
+                      >
+                        Utilisé pour les nouveaux trajets. Les
+                        trajets déjà enregistrés gardent leur
+                        tarif.
+                      </p>
+
+                      {minibusVehicles.length > 0 && (
+                        <MinibusRatesForm
+                          key={minibusVehicles
+                            .map((v) => v.costPerKm)
+                            .join('-')}
+                          vehicles={minibusVehicles}
+                          onSave={saveMinibusRates}
+                        />
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* CYCLES RUGBY : ECOLES */}
 
             {activeTab === 'cycles' &&
@@ -16999,6 +17915,24 @@ export default function MeleeApp() {
           onCancel={() =>
             setShowTransactionForm(null)
           }
+        />
+      )}
+
+      {/* TRAJET MINIBUS */}
+
+      {showMinibusForm && (
+        <MinibusTripFormModal
+          existing={showMinibusForm.existing || null}
+          vehicles={minibusVehicles}
+          onSubmit={(data) =>
+            showMinibusForm.existing
+              ? updateMinibusTrip(
+                  showMinibusForm.existing.id,
+                  data
+                )
+              : createMinibusTrip(data)
+          }
+          onCancel={() => setShowMinibusForm(null)}
         />
       )}
 
