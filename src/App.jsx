@@ -1115,38 +1115,50 @@ function pdfSummaryBox(doc, { x0, y, width, title, items }) {
 
 const SCHOOL_PDF_MARGIN = 12;
 
-function schoolSessionRows(doc, sessions, exercises) {
+const SCHOOL_PDF_WEEKDAYS = [
+  'Dimanche',
+  'Lundi',
+  'Mardi',
+  'Mercredi',
+  'Jeudi',
+  'Vendredi',
+  'Samedi',
+];
+
+function schoolSessionRows(sessions) {
   return sessions.map((sess, idx) => {
-    const sessExercises = exercises.filter((e) => e.sessionId === sess.id);
-    const titles = sessExercises.length
-      ? sessExercises.map((e) => e.title).join(', ')
-      : '—';
+    let weekday = '—';
+    if (sess.date) {
+      const [y, m, d] = sess.date.split('-').map(Number);
+      weekday = SCHOOL_PDF_WEEKDAYS[new Date(y, m - 1, d).getDay()];
+    }
     return {
       cells: {
-        n: String(idx + 1),
+        n: `Séance ${idx + 1}`,
+        day: weekday,
         date: formatDateShortFR(sess.date),
         time: sess.time || '—',
-        exercises: titles,
       },
     };
   });
 }
 
-function drawSchoolSessionsTable(doc, startY, sessions, exercises) {
+// Les exercices ne figurent pas dans les PDF des cycles (seulement les séances).
+function drawSchoolSessionsTable(doc, startY, sessions) {
   const { W } = pdfPageSize(doc);
   const M = SCHOOL_PDF_MARGIN;
-  const fixed = 12 + 26 + 20;
+  const width = W - 2 * M;
   const cols = [
-    { key: 'n', label: 'N°', w: 12 },
-    { key: 'date', label: 'Date', w: 26 },
-    { key: 'time', label: 'Heure', w: 20 },
-    { key: 'exercises', label: 'Exercices', w: W - 2 * M - fixed },
+    { key: 'n', label: 'Séance', w: 40, bold: true },
+    { key: 'day', label: 'Jour', w: 50 },
+    { key: 'date', label: 'Date', w: 50 },
+    { key: 'time', label: 'Heure', w: width - 140, right: true },
   ];
   return pdfTable(doc, {
     x0: M,
     y: startY,
     cols,
-    rows: schoolSessionRows(doc, sessions, exercises),
+    rows: schoolSessionRows(sessions),
     emptyText: 'Aucune séance programmée.',
   });
 }
@@ -1182,7 +1194,7 @@ function buildClassSessionsPdf(school, schoolClass, sessions, exercises, logo) {
     lines: [`École : ${school.name}`, classInfoLabel(schoolClass)],
   });
 
-  y = drawSchoolSessionsTable(doc, y, sessions, exercises);
+  y = drawSchoolSessionsTable(doc, y, sessions);
   y = pdfTotalRow(doc, {
     x0: M,
     y,
@@ -1233,7 +1245,7 @@ function buildSchoolClassesPdf(school, classes, allSessions, allExercises, logo)
         (a.date + (a.time || '')).localeCompare(b.date + (b.time || ''))
       );
 
-    y = drawSchoolSessionsTable(doc, y, classSessions, allExercises);
+    y = drawSchoolSessionsTable(doc, y, classSessions);
   });
 
   y = pdfTotalRow(doc, {
