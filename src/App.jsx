@@ -6120,6 +6120,34 @@ function computeMinibusTrip(kmOneWay, roundTrip, params, fuelPrice) {
   };
 }
 
+/*
+  Répartition OB / USB : le coût total du déplacement est partagé au
+  prorata du nombre de personnes de chaque club.
+  Part OB = coût total × OB / (OB + USB) ; Part USB = le reste.
+  Sans effectif renseigné, les parts ne sont pas calculées.
+*/
+function computeTripShares(trip) {
+  const ob = Math.max(0, Number(trip?.obCount) || 0);
+  const usb = Math.max(0, Number(trip?.usbCount) || 0);
+  const total = Number(trip?.totalCost) || 0;
+  if (ob + usb === 0) return { ob: null, usb: null };
+  const obShare = round2((total * ob) / (ob + usb));
+  return { ob: obShare, usb: round2(total - obShare) };
+}
+
+function sumTripShares(trips) {
+  return trips.reduce(
+    (acc, t) => {
+      const sh = computeTripShares(t);
+      acc.ob += sh.ob || 0;
+      acc.usb += sh.usb || 0;
+      if (sh.ob == null) acc.unassigned += Number(t.totalCost) || 0;
+      return acc;
+    },
+    { ob: 0, usb: 0, unassigned: 0 }
+  );
+}
+
 function formatPerKm(amount) {
   if (amount == null) return '—';
   return `${Number(amount).toLocaleString('fr-FR', {
@@ -7027,6 +7055,7 @@ function MinibusTripFormModal({
 }
 
 function TripDetailModal({ trip, onEdit, onDuplicate, onDelete, onCancel }) {
+  const tripShares = computeTripShares(trip);
   const rows = [
     ['Date', `${formatDateFR(trip.tripDate)} ${trip.tripDate.slice(0, 4)}`],
     ['Catégorie', trip.category || '—'],
@@ -7063,6 +7092,18 @@ function TripDetailModal({ trip, onEdit, onDuplicate, onDelete, onCancel }) {
         : `OB : ${trip.obCount ?? 0} · USB : ${trip.usbCount ?? 0} · Total : ${
             (trip.obCount || 0) + (trip.usbCount || 0)
           }`,
+    ],
+    [
+      'Part OB',
+      tripShares.ob != null
+        ? `${formatCurrency(tripShares.ob)} (${trip.obCount || 0} pers.)`
+        : '—',
+    ],
+    [
+      'Part USB',
+      tripShares.usb != null
+        ? `${formatCurrency(tripShares.usb)} (${trip.usbCount || 0} pers.)`
+        : '—',
     ],
     ['Conducteur', trip.driver || '—'],
     ['Remarques', trip.reason || '—'],
@@ -7206,16 +7247,18 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
 
   // Tableau
   const cols = [
-    { key: 'date', label: 'Date', w: 22 },
-    { key: 'cat', label: 'Catégorie', w: 24 },
-    { key: 'dest', label: 'Destination', w: 68 },
-    { key: 'veh', label: 'Véhicule', w: 24 },
-    { key: 'ob', label: 'OB', w: 12, right: true },
-    { key: 'usb', label: 'USB', w: 12, right: true },
-    { key: 'km', label: 'Distance A/R', w: 27, right: true },
-    { key: 'fuel', label: 'Carburant', w: 26, right: true },
-    { key: 'wear', label: 'Usure', w: 24, right: true },
-    { key: 'total', label: 'Total', w: 34, right: true },
+    { key: 'date', label: 'Date', w: 19 },
+    { key: 'cat', label: 'Catégorie', w: 20 },
+    { key: 'dest', label: 'Destination', w: 52 },
+    { key: 'veh', label: 'Véhicule', w: 18 },
+    { key: 'ob', label: 'OB', w: 10, right: true },
+    { key: 'usb', label: 'USB', w: 11, right: true },
+    { key: 'km', label: 'Distance A/R', w: 23, right: true },
+    { key: 'fuel', label: 'Carburant', w: 21, right: true },
+    { key: 'wear', label: 'Usure', w: 20, right: true },
+    { key: 'total', label: 'Total', w: 24, right: true },
+    { key: 'partOb', label: 'Part OB', w: 27, right: true },
+    { key: 'partUsb', label: 'Part USB', w: 27, right: true },
   ];
   const tableW = cols.reduce((s, c) => s + c.w, 0);
   const x0 = (W - tableW) / 2;
@@ -7242,6 +7285,7 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
   drawHeader();
 
   const totals = { km: 0, fuel: 0, wear: 0, total: 0, ob: 0, usb: 0 };
+  const shareTotals = sumTripShares(trips);
 
   if (trips.length === 0) {
     doc.setFontSize(10);
@@ -7267,6 +7311,7 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
       doc.setFillColor(246, 244, 236);
       doc.rect(x0, y, tableW, rowH, 'F');
     }
+    const shares = computeTripShares(t);
     totals.km += t.kmTotal;
     totals.fuel += t.fuelCost || 0;
     totals.wear += t.wearCost || 0;
@@ -7284,12 +7329,17 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
       fuel: t.fuelCost != null ? pdfMoney(t.fuelCost) : '—',
       wear: t.wearCost != null ? pdfMoney(t.wearCost) : '—',
       total: pdfMoney(t.totalCost),
+      partOb: shares.ob != null ? pdfMoney(shares.ob) : '—',
+      partUsb: shares.usb != null ? pdfMoney(shares.usb) : '—',
     };
     doc.setTextColor(...BLACK);
     doc.setFontSize(8.5);
     let x = x0;
     cols.forEach((c) => {
-      doc.setFont('helvetica', c.key === 'total' ? 'bold' : 'normal');
+      doc.setFont(
+        'helvetica',
+        ['total', 'partOb', 'partUsb'].includes(c.key) ? 'bold' : 'normal'
+      );
       doc.text(values[c.key], c.right ? x + c.w - 2 : x + 2, y + 4.8, {
         align: c.right ? 'right' : 'left',
       });
@@ -7313,14 +7363,14 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
   doc.text(`TOTAL (${trips.length} déplacement${trips.length > 1 ? 's' : ''})`, x0 + 2, y + 6);
   let xt = x0;
   cols.forEach((c) => {
-    const v = { ob: String(totals.ob), usb: String(totals.usb), km: pdfKm(totals.km), fuel: pdfMoney(totals.fuel), wear: pdfMoney(totals.wear), total: pdfMoney(totals.total) }[c.key];
+    const v = { ob: String(totals.ob), usb: String(totals.usb), km: pdfKm(totals.km), fuel: pdfMoney(totals.fuel), wear: pdfMoney(totals.wear), total: pdfMoney(totals.total), partOb: pdfMoney(shareTotals.ob), partUsb: pdfMoney(shareTotals.usb) }[c.key];
     if (v) doc.text(v, xt + c.w - 2, y + 6, { align: 'right' });
     xt += c.w;
   });
   y += 16;
 
   // Récapitulatif financier
-  const boxH = 39;
+  const boxH = shareTotals.unassigned > 0 ? 58 : 53;
   if (y + boxH > bottom) {
     doc.addPage();
     y = 14;
@@ -7342,11 +7392,34 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
     ['Total usure', pdfMoney(totals.wear)],
     ['Coût global', pdfMoney(totals.total)],
   ];
+  const sharesSummary = [
+    ['Part USB', pdfMoney(shareTotals.usb)],
+    ['Part OB', pdfMoney(shareTotals.ob)],
+  ];
+  if (shareTotals.unassigned > 0) {
+    sharesSummary.push([
+      'Non réparti (effectifs non saisis)',
+      pdfMoney(shareTotals.unassigned),
+    ]);
+  }
   summary.forEach(([label, value], i) => {
     const ly = y + 12 + i * 4.8;
     const last = i === summary.length - 1;
     doc.setFont('helvetica', last ? 'bold' : 'normal');
     doc.setFontSize(last ? 10 : 9);
+    doc.text(label, x0 + 3, ly);
+    doc.text(value, x0 + 117, ly, { align: 'right' });
+  });
+  const sy = y + 12 + summary.length * 4.8;
+  doc.setDrawColor(...YELLOW);
+  doc.line(x0 + 3, sy - 2.6, x0 + 117, sy - 2.6);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.text('Répartition au prorata des effectifs', x0 + 3, sy + 1);
+  sharesSummary.forEach(([label, value], i) => {
+    const ly = sy + 6 + i * 4.8;
+    doc.setFont('helvetica', i < 2 ? 'bold' : 'normal');
+    doc.setFontSize(9);
     doc.text(label, x0 + 3, ly);
     doc.text(value, x0 + 117, ly, { align: 'right' });
   });
@@ -17991,6 +18064,7 @@ export default function MeleeApp() {
                 fuel: sum(filteredTrips, 'fuelCost'),
                 wear: sum(filteredTrips, 'wearCost'),
                 total: sum(filteredTrips, 'totalCost'),
+                shares: sumTripShares(filteredTrips),
               };
 
               const periodLabel =
@@ -18160,6 +18234,27 @@ export default function MeleeApp() {
                         />
                       </div>
 
+                      {/* RÉPARTITION OB / USB (au prorata des effectifs) */}
+
+                      <div className="grid grid-cols-2 gap-3 mt-3">
+                        <StatCard
+                          icon={Users}
+                          label="Part USB"
+                          value={formatCurrency(stats.shares.usb)}
+                        />
+                        <StatCard
+                          icon={Users}
+                          label="Part OB"
+                          value={formatCurrency(stats.shares.ob)}
+                        />
+                      </div>
+                      <p className="text-xs mt-1" style={{ color: 'var(--ink-light)' }}>
+                        Coût total de chaque déplacement partagé selon le nombre
+                        de personnes OB et USB.
+                        {stats.shares.unassigned > 0 &&
+                          ` ${formatCurrency(stats.shares.unassigned)} non réparti (effectifs non saisis).`}
+                      </p>
+
                       {/* FILTRES */}
 
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
@@ -18282,13 +18377,15 @@ export default function MeleeApp() {
                               <th style={{ ...th, ...num }}>Carburant</th>
                               <th style={{ ...th, ...num }}>Usure</th>
                               <th style={{ ...th, ...num }}>Total</th>
+                              <th style={{ ...th, ...num }}>Part OB</th>
+                              <th style={{ ...th, ...num }}>Part USB</th>
                             </tr>
                           </thead>
                           <tbody>
                             {filteredTrips.length === 0 ? (
                               <tr>
                                 <td
-                                  colSpan={10}
+                                  colSpan={12}
                                   style={{ ...td, textAlign: 'center', color: 'var(--ink-light)', padding: 24 }}
                                 >
                                   Aucun déplacement pour ces filtres.
@@ -18356,6 +18453,19 @@ export default function MeleeApp() {
                                   <td style={{ ...td, ...num, fontWeight: 700 }}>
                                     {formatCurrency(t.totalCost)}
                                   </td>
+                                  {(() => {
+                                    const sh = computeTripShares(t);
+                                    return (
+                                      <>
+                                        <td style={{ ...td, ...num }}>
+                                          {sh.ob != null ? formatCurrency(sh.ob) : '—'}
+                                        </td>
+                                        <td style={{ ...td, ...num }}>
+                                          {sh.usb != null ? formatCurrency(sh.usb) : '—'}
+                                        </td>
+                                      </>
+                                    );
+                                  })()}
                                 </tr>
                               ))
                             )}
@@ -18383,6 +18493,12 @@ export default function MeleeApp() {
                                 </td>
                                 <td style={{ ...td, ...num, fontWeight: 700, color: '#E3B100', borderBottom: 'none' }}>
                                   {formatCurrency(stats.total)}
+                                </td>
+                                <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>
+                                  {formatCurrency(stats.shares.ob)}
+                                </td>
+                                <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>
+                                  {formatCurrency(stats.shares.usb)}
                                 </td>
                               </tr>
                             </tfoot>
