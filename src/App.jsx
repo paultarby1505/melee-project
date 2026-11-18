@@ -59,6 +59,8 @@ import {
   FileDown,
   UserCog,
   Bus,
+  Menu,
+  ArrowRight,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import {
@@ -157,8 +159,8 @@ const STATUS_META = {
   },
   termine: {
     label: 'Terminé',
-    bg: '#E7E9E6',
-    color: '#55605A',
+    bg: '#222226',
+    color: '#B5B3AA',
   },
 };
 
@@ -328,6 +330,45 @@ const EVAL_THEMES = [
 /* =========================================================
    OUTILS
 ========================================================= */
+
+function initialsOf(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1)
+    return parts[0].slice(0, 2).toUpperCase();
+  return (
+    parts[0][0] + parts[parts.length - 1][0]
+  ).toUpperCase();
+}
+
+function formatAgendaDay(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T00:00:00');
+  const days = ['Dim.', 'Lun.', 'Mar.', 'Mer.', 'Jeu.', 'Ven.', 'Sam.'];
+  const months = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+  return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}`;
+}
+
+function getNavLabel(tabId) {
+  for (const item of NAV_ITEMS) {
+    if (!item.children) {
+      if (item.id === tabId)
+        return { label: item.label, group: null };
+      continue;
+    }
+    const child = item.children.find(
+      (c) => c.id === tabId
+    );
+    if (child)
+      return { label: child.label, group: item.label };
+  }
+  if (tabId === 'admin')
+    return { label: 'Administration', group: null };
+  return { label: 'Accueil', group: null };
+}
 
 function genId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -1379,7 +1420,7 @@ function StatCard({ icon: Icon, label, value, danger }) {
           className="text-xs font-semibold uppercase"
           style={{
             color: 'var(--ink-light)',
-            letterSpacing: '0.03em',
+            letterSpacing: '0.14em',
           }}
         >
           {label}
@@ -1399,7 +1440,9 @@ function StatCard({ icon: Icon, label, value, danger }) {
         className="score mt-1"
         style={{
           color: alert ? 'var(--red)' : 'var(--ink)',
-          fontSize: '28px',
+          fontSize: '44px',
+          lineHeight: 1,
+          marginTop: 12,
         }}
       >
         {value}
@@ -4190,7 +4233,7 @@ function BootstrapAdminForm({
   return (
     <div
       className="flex items-center justify-center"
-      style={{ minHeight: '65vh' }}
+      style={{ width: '100%' }}
     >
       <div
         className="modal-card"
@@ -4318,7 +4361,7 @@ function LoginForm({
   return (
     <div
       className="flex items-center justify-center"
-      style={{ minHeight: '65vh' }}
+      style={{ width: '100%' }}
     >
       <div
         className="modal-card"
@@ -4518,9 +4561,18 @@ function CalendarView({
               <span
                 className="text-xs font-semibold"
                 style={{
-                  color: dayOff
+                  color: isToday
+                    ? 'var(--on-pitch)'
+                    : dayOff
                     ? 'var(--red)'
                     : 'var(--ink)',
+                  background: isToday
+                    ? 'var(--pitch)'
+                    : 'transparent',
+                  borderRadius: 999,
+                  minWidth: 22,
+                  padding: '1px 6px',
+                  textAlign: 'center',
                 }}
               >
                 {cell.day}
@@ -4645,7 +4697,7 @@ function MemberLegend({
                 ? getMemberColor(user.displayName)
                 : 'var(--chalk)',
               color: active
-                ? 'var(--white)'
+                ? '#FFFFFF'
                 : 'var(--ink)',
               border: 'none',
               cursor: 'pointer',
@@ -6002,6 +6054,34 @@ function computeMinibusTrip(kmOneWay, roundTrip, params, fuelPrice) {
   };
 }
 
+/*
+  Répartition OB / USB : le coût total du déplacement est partagé au
+  prorata du nombre de personnes de chaque club.
+  Part OB = coût total × OB / (OB + USB) ; Part USB = le reste.
+  Sans effectif renseigné, les parts ne sont pas calculées.
+*/
+function computeTripShares(trip) {
+  const ob = Math.max(0, Number(trip?.obCount) || 0);
+  const usb = Math.max(0, Number(trip?.usbCount) || 0);
+  const total = Number(trip?.totalCost) || 0;
+  if (ob + usb === 0) return { ob: null, usb: null };
+  const obShare = round2((total * ob) / (ob + usb));
+  return { ob: obShare, usb: round2(total - obShare) };
+}
+
+function sumTripShares(trips) {
+  return trips.reduce(
+    (acc, t) => {
+      const sh = computeTripShares(t);
+      acc.ob += sh.ob || 0;
+      acc.usb += sh.usb || 0;
+      if (sh.ob == null) acc.unassigned += Number(t.totalCost) || 0;
+      return acc;
+    },
+    { ob: 0, usb: 0, unassigned: 0 }
+  );
+}
+
 function formatPerKm(amount) {
   if (amount == null) return '—';
   return `${Number(amount).toLocaleString('fr-FR', {
@@ -6738,7 +6818,7 @@ function MinibusTripFormModal({
                 border: '1px solid var(--line)',
                 borderRadius: 8,
                 padding: 12,
-                background: '#FFF8DC',
+                background: 'var(--pitch-tint)',
               }}
             >
               <div className="grid grid-cols-3 gap-2 text-center">
@@ -6909,6 +6989,7 @@ function MinibusTripFormModal({
 }
 
 function TripDetailModal({ trip, onEdit, onDuplicate, onDelete, onCancel }) {
+  const tripShares = computeTripShares(trip);
   const rows = [
     ['Date', `${formatDateFR(trip.tripDate)} ${trip.tripDate.slice(0, 4)}`],
     ['Catégorie', trip.category || '—'],
@@ -6945,6 +7026,18 @@ function TripDetailModal({ trip, onEdit, onDuplicate, onDelete, onCancel }) {
         : `OB : ${trip.obCount ?? 0} · USB : ${trip.usbCount ?? 0} · Total : ${
             (trip.obCount || 0) + (trip.usbCount || 0)
           }`,
+    ],
+    [
+      'Part OB',
+      tripShares.ob != null
+        ? `${formatCurrency(tripShares.ob)} (${trip.obCount || 0} pers.)`
+        : '—',
+    ],
+    [
+      'Part USB',
+      tripShares.usb != null
+        ? `${formatCurrency(tripShares.usb)} (${trip.usbCount || 0} pers.)`
+        : '—',
     ],
     ['Conducteur', trip.driver || '—'],
     ['Remarques', trip.reason || '—'],
@@ -7028,20 +7121,24 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
   });
 
   const cols = [
-    { key: 'date', label: 'Date', w: 22 },
-    { key: 'cat', label: 'Catégorie', w: 24 },
-    { key: 'dest', label: 'Destination', w: 68, maxLines: 2 },
-    { key: 'veh', label: 'Véhicule', w: 24 },
-    { key: 'ob', label: 'OB', w: 12, right: true },
-    { key: 'usb', label: 'USB', w: 12, right: true },
-    { key: 'km', label: 'Distance A/R', w: 27, right: true },
-    { key: 'fuel', label: 'Carburant', w: 26, right: true },
-    { key: 'wear', label: 'Usure', w: 24, right: true },
-    { key: 'total', label: 'Total', w: 34, right: true, bold: true },
+    { key: 'date', label: 'Date', w: 19 },
+    { key: 'cat', label: 'Catégorie', w: 20 },
+    { key: 'dest', label: 'Destination', w: 52, maxLines: 2 },
+    { key: 'veh', label: 'Véhicule', w: 18 },
+    { key: 'ob', label: 'OB', w: 10, right: true },
+    { key: 'usb', label: 'USB', w: 11, right: true },
+    { key: 'km', label: 'Distance A/R', w: 23, right: true },
+    { key: 'fuel', label: 'Carburant', w: 21, right: true },
+    { key: 'wear', label: 'Usure', w: 20, right: true },
+    { key: 'total', label: 'Total', w: 24, right: true, bold: true },
+    { key: 'partOb', label: 'Part OB', w: 27, right: true, bold: true },
+    { key: 'partUsb', label: 'Part USB', w: 27, right: true, bold: true },
   ];
 
   const totals = { km: 0, fuel: 0, wear: 0, total: 0, ob: 0, usb: 0 };
+  const shareTotals = sumTripShares(trips);
   const rows = trips.map((t) => {
+    const shares = computeTripShares(t);
     totals.km += t.kmTotal;
     totals.fuel += t.fuelCost || 0;
     totals.wear += t.wearCost || 0;
@@ -7059,6 +7156,8 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
       fuel: t.fuelCost != null ? pdfMoney(t.fuelCost) : '—',
       wear: t.wearCost != null ? pdfMoney(t.wearCost) : '—',
       total: pdfMoney(t.totalCost),
+      partOb: shares.ob != null ? pdfMoney(shares.ob) : '—',
+      partUsb: shares.usb != null ? pdfMoney(shares.usb) : '—',
     };
   });
 
@@ -7074,6 +7173,8 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
       fuel: pdfMoney(totals.fuel),
       wear: pdfMoney(totals.wear),
       total: pdfMoney(totals.total),
+      partOb: pdfMoney(shareTotals.ob),
+      partUsb: pdfMoney(shareTotals.usb),
     },
   });
 
@@ -7086,6 +7187,23 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
     ['Total usure', pdfMoney(totals.wear)],
     ['Coût global', pdfMoney(totals.total)],
   ]);
+
+  const sharesLines = [];
+  if (shareTotals.unassigned > 0) {
+    sharesLines.push([
+      'Non réparti (effectifs non saisis)',
+      pdfMoney(shareTotals.unassigned),
+    ]);
+  }
+  sharesLines.push(
+    ['Part USB', pdfMoney(shareTotals.usb)],
+    ['Part OB', pdfMoney(shareTotals.ob)]
+  );
+  drawPdfSummaryBox(
+    ctx,
+    'Répartition au prorata des effectifs',
+    sharesLines
+  );
 
   return finalizeBrandedPdf(ctx);
 }
@@ -8825,62 +8943,11 @@ export default function MeleeApp() {
 
   const [pdfBusy, setPdfBusy] = useState(false);
 
-  const [openNavMenu, setOpenNavMenu] = useState(
-    null
-  );
+  const [sidebarOpen, setSidebarOpen] =
+    useState(false);
 
-  const [navMenuPos, setNavMenuPos] = useState({
-    top: 0,
-    left: 0,
-  });
-
-  const navCloseTimer = useRef(null);
-
-  function cancelNavClose() {
-    if (navCloseTimer.current) {
-      clearTimeout(navCloseTimer.current);
-      navCloseTimer.current = null;
-    }
-  }
-
-  function scheduleNavClose() {
-    cancelNavClose();
-    navCloseTimer.current = setTimeout(() => {
-      setOpenNavMenu(null);
-    }, 150);
-  }
-
-  function openNavDropdown(item, triggerEl) {
-    cancelNavClose();
-    const rect = triggerEl.getBoundingClientRect();
-    setNavMenuPos({
-      top: rect.bottom,
-      left: rect.left,
-    });
-    setOpenNavMenu(item.id);
-  }
-
-  useEffect(() => {
-    if (!openNavMenu) return;
-    function handleOutsideClick(e) {
-      if (
-        e.target.closest('.nav-dropdown') ||
-        e.target.closest('.nav-dropdown-menu')
-      ) {
-        return;
-      }
-      setOpenNavMenu(null);
-    }
-    document.addEventListener(
-      'mousedown',
-      handleOutsideClick
-    );
-    return () =>
-      document.removeEventListener(
-        'mousedown',
-        handleOutsideClick
-      );
-  }, [openNavMenu]);
+  const [openNavGroups, setOpenNavGroups] =
+    useState([]);
 
   const [chatDrawerOpen, setChatDrawerOpen] =
     useState(false);
@@ -12410,7 +12477,9 @@ export default function MeleeApp() {
     setSelectedEdrSessionId(null);
     setSelectedPlanningWeekId(null);
     setSelectedPlanningWeekGroupKey(null);
-    setOpenNavMenu(null);
+    setSidebarOpen(false);
+    setShowUserMenu(false);
+    window.scrollTo(0, 0);
   }
 
   function getProject(id) {
@@ -13064,6 +13133,90 @@ export default function MeleeApp() {
     };
   };
 
+  const currentNavLabel = getNavLabel(activeTab);
+
+  const todayIsoHome = todayISO();
+
+  const nextEvent = useMemo(
+    () =>
+      events
+        .filter((e) => e.date && e.date >= todayIsoHome)
+        .sort((a, b) =>
+          (a.date + (a.time || '')).localeCompare(
+            b.date + (b.time || '')
+          )
+        )[0] || null,
+    [events, todayIsoHome]
+  );
+
+  const weekAgenda = useMemo(() => {
+    const limit = dateToISO(
+      new Date(Date.now() + 7 * 86400000)
+    );
+    const items = [];
+    events.forEach((e) => {
+      if (!e.date || e.date < todayIsoHome || e.date > limit)
+        return;
+      items.push({
+        key: 'e' + e.id,
+        kind: 'event',
+        date: e.date,
+        sort: '1' + e.date + (e.time || ''),
+        title: e.title,
+        subtitle: [
+          e.time ? e.time.slice(0, 5) : null,
+          e.assignee || null,
+        ]
+          .filter(Boolean)
+          .join(' · ') || 'Événement',
+      });
+    });
+    tasks.forEach((t) => {
+      if (t.status === 'termine' || !t.dueDate) return;
+      const late = t.dueDate < todayIsoHome;
+      if (!late && t.dueDate > limit) return;
+      items.push({
+        key: 't' + t.id,
+        kind: 'task',
+        late,
+        date: t.dueDate,
+        sort: (late ? '0' : '1') + t.dueDate,
+        title: t.title,
+        subtitle:
+          projects.find((p) => p.id === t.projectId)?.name ||
+          'Tâche',
+      });
+    });
+    return items
+      .sort((a, b) => a.sort.localeCompare(b.sort))
+      .slice(0, 7);
+  }, [events, tasks, projects, todayIsoHome]);
+
+  const projectProgress = useMemo(
+    () =>
+      projects
+        .filter((p) => p.status === 'en_cours')
+        .slice(0, 5)
+        .map((p) => {
+          const pt = tasks.filter(
+            (t) => t.projectId === p.id
+          );
+          const done = pt.filter(
+            (t) => t.status === 'termine'
+          ).length;
+          return {
+            id: p.id,
+            name: p.name,
+            total: pt.length,
+            done,
+            pct: pt.length
+              ? Math.round((done / pt.length) * 100)
+              : 0,
+          };
+        }),
+    [projects, tasks]
+  );
+
   const now = new Date();
 
   const todayLabelFR =
@@ -13080,46 +13233,42 @@ export default function MeleeApp() {
     <div className="melee-app">
 
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Work+Sans:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
-        :root {
-          --pitch-dark:#1A1A1A;
-          --pitch:#E3B100;
-          --pitch-tint:#FFF4D6;
-          --chalk:#F7F5F0;
-          --ink:#20241F;
-          --ink-light:#5C6259;
+        :root,
+        .melee-app {
+          --bg:#0B0B0C;
+          --pitch-dark:#FFED00;
+          --pitch:#FFED00;
+          --pitch-tint:#2A2706;
+          --on-pitch:#0B0B0C;
+          --chalk:#1C1C1F;
+          --ink:#F4F2EA;
+          --ink-light:#9A988F;
           --tan:#B08968;
-          --tan-text:#8A5A34;
-          --tan-tint:#F1E6DC;
-          --amber:#B9791F;
-          --amber-tint:#FBEBD0;
-          --red:#B23A30;
-          --red-tint:#F6DEDC;
-          --line:#E4E0D6;
-          --white:#FFFFFF;
+          --tan-text:#D9B48F;
+          --tan-tint:#2A211A;
+          --amber:#E8A33D;
+          --amber-tint:#2E2312;
+          --red:#FF6B5E;
+          --red-tint:#3A1A17;
+          --line:#26262A;
+          --white:#141416;
+          --sidebar-w:256px;
+        }
+
+        html, body {
+          background:#0B0B0C;
+          margin:0;
         }
 
         .melee-app {
-          --pitch-dark:#1A1A1A;
-          --pitch:#E3B100;
-          --pitch-tint:#FFF4D6;
-          --chalk:#F7F5F0;
-          --ink:#20241F;
-          --ink-light:#5C6259;
-          --tan:#B08968;
-          --tan-text:#8A5A34;
-          --tan-tint:#F1E6DC;
-          --amber:#B9791F;
-          --amber-tint:#FBEBD0;
-          --red:#B23A30;
-          --red-tint:#F6DEDC;
-          --line:#E4E0D6;
-          --white:#FFFFFF;
-          font-family:'Work Sans',sans-serif;
-          background:var(--chalk);
+          font-family:'Inter',sans-serif;
+          background:var(--bg);
           color:var(--ink);
           min-height:100vh;
+          color-scheme:dark;
+          -webkit-font-smoothing:antialiased;
         }
 
         .melee-app *,
@@ -13128,8 +13277,26 @@ export default function MeleeApp() {
           box-sizing:border-box;
         }
 
+        .melee-app ::selection {
+          background:var(--pitch);
+          color:var(--on-pitch);
+        }
+
         .melee-app .font-display {
-          font-family:'Oswald',sans-serif;
+          font-family:'Barlow Condensed',sans-serif;
+          font-weight:700;
+          text-transform:uppercase;
+          letter-spacing:.03em;
+        }
+
+        .melee-app h1.font-display {
+          font-size:34px;
+          line-height:1.05;
+        }
+
+        .melee-app h2.font-display {
+          font-weight:600;
+          letter-spacing:.06em;
         }
 
         .melee-app button:disabled {
@@ -13137,124 +13304,561 @@ export default function MeleeApp() {
           cursor:not-allowed;
         }
 
-        .melee-app .app-header {
-          background:var(--pitch-dark);
-          color:var(--chalk);
-          padding:14px 20px;
-          display:flex;
-          align-items:center;
-          justify-content:space-between;
-          position:sticky;
+        /* ---------- Coque : volet latéral + contenu ---------- */
+
+        .melee-app .app-shell {
+          min-height:100vh;
+        }
+
+        .melee-app .app-sidebar {
+          position:fixed;
           top:0;
-          z-index:20;
-        }
-
-        .melee-app .logo-mark {
-          width:10px;
-          height:10px;
-          background:var(--pitch);
-          border-radius:2px;
-          transform:rotate(45deg);
-          display:inline-block;
-        }
-
-        .melee-app .user-badge,
-        .melee-app .header-icon-btn {
-          display:inline-flex;
-          align-items:center;
-          justify-content:center;
-          gap:6px;
-          background:rgba(247,245,240,.1);
-          border:1px solid rgba(247,245,240,.25);
-          color:var(--chalk);
-          cursor:pointer;
-        }
-
-        .melee-app .user-badge {
-          padding:6px 10px;
-          border-radius:999px;
-          font-size:13px;
-        }
-
-        .melee-app .header-icon-btn {
-          width:32px;
-          height:32px;
-          border-radius:8px;
-        }
-
-        .melee-app .app-nav {
+          bottom:0;
+          left:0;
+          width:var(--sidebar-w);
+          background:var(--bg);
+          border-right:1px solid var(--line);
           display:flex;
-          gap:4px;
-          overflow-x:auto;
-          background:var(--white);
+          flex-direction:column;
+          z-index:40;
+          overflow-y:auto;
+          transition:transform .22s ease;
+        }
+
+        .melee-app .sidebar-brand {
+          display:flex;
+          flex-direction:column;
+          align-items:center;
+          gap:10px;
+          padding:26px 18px 22px;
+          margin:0 16px;
           border-bottom:1px solid var(--line);
-          padding:0 12px;
-        }
-
-        .melee-app .nav-tab {
-          display:flex;
-          align-items:center;
-          gap:6px;
-          white-space:nowrap;
-          padding:12px;
-          font-size:13px;
-          font-weight:600;
-          color:var(--ink-light);
-          border-bottom:2px solid transparent;
-          cursor:pointer;
           background:none;
           border-top:none;
           border-left:none;
           border-right:none;
+          color:inherit;
+          cursor:pointer;
         }
 
-        .melee-app .nav-tab.active {
-          color:var(--pitch-dark);
-          border-bottom-color:var(--pitch);
+        .melee-app .sidebar-brand img {
+          width:78px;
+          height:auto;
+          filter:drop-shadow(0 6px 18px rgba(255,237,0,.12));
         }
 
-        .melee-app .nav-dropdown {
-          position:relative;
+        .melee-app .brand-name {
+          font-family:'Barlow Condensed',sans-serif;
+          font-weight:700;
+          font-size:26px;
+          letter-spacing:.16em;
+          color:#FFFFFF;
+          line-height:1;
         }
 
-        .nav-dropdown-menu {
-          box-sizing:border-box;
-          font-family:'Work Sans',sans-serif;
-          position:fixed;
-          background:var(--white);
-          border:1px solid var(--line);
-          border-radius:10px;
-          box-shadow:0 10px 24px rgba(22,20,10,.12);
-          padding:6px;
-          min-width:180px;
-          z-index:60;
+        .melee-app .brand-sub {
+          font-size:10.5px;
+          letter-spacing:.2em;
+          text-transform:uppercase;
+          color:var(--ink-light);
+          margin-top:4px;
+          text-align:center;
+        }
+
+        .melee-app .sidebar-nav {
           display:flex;
           flex-direction:column;
           gap:2px;
+          padding:18px 12px;
         }
 
-        .nav-dropdown-item {
-          box-sizing:border-box;
-          font-family:'Work Sans',sans-serif;
+        .melee-app .side-link {
           display:flex;
           align-items:center;
-          gap:8px;
-          white-space:nowrap;
-          padding:9px 10px;
-          font-size:13px;
-          font-weight:600;
-          color:var(--ink);
-          cursor:pointer;
-          background:none;
+          gap:12px;
+          width:100%;
+          min-height:42px;
+          padding:0 14px;
+          border-radius:8px;
           border:none;
-          border-radius:7px;
+          background:none;
+          color:#C9C7BE;
+          font-family:'Inter',sans-serif;
+          font-size:14px;
+          font-weight:500;
           text-align:left;
+          cursor:pointer;
+          transition:background .15s, color .15s;
         }
 
-        .nav-dropdown-item:hover,
-        .nav-dropdown-item.active {
+        .melee-app .side-link:hover {
+          background:#17171A;
+          color:#FFFFFF;
+        }
+
+        .melee-app .side-link.active {
+          background:var(--pitch);
+          color:var(--on-pitch);
+          font-weight:600;
+        }
+
+        .melee-app .side-link.group-active {
+          color:#FFFFFF;
+        }
+
+        .melee-app .side-link .chev {
+          margin-left:auto;
+          opacity:.6;
+          transition:transform .15s;
+        }
+
+        .melee-app .side-link .chev.open {
+          transform:rotate(90deg);
+        }
+
+        .melee-app .side-sub {
+          display:flex;
+          flex-direction:column;
+          gap:2px;
+          margin:2px 0 6px 26px;
+          padding-left:12px;
+          border-left:1px solid var(--line);
+        }
+
+        .melee-app .side-sub .side-link {
+          min-height:36px;
+          font-size:13px;
+          padding:0 12px;
+        }
+
+        .melee-app .sidebar-section {
+          font-size:10.5px;
+          font-weight:600;
+          letter-spacing:.18em;
+          text-transform:uppercase;
+          color:#6E6C66;
+          padding:14px 14px 6px;
+        }
+
+        .melee-app .sidebar-foot {
+          margin-top:auto;
+          padding:14px 12px 18px;
+        }
+
+        .melee-app .user-card {
+          position:relative;
+          display:flex;
+          align-items:center;
+          gap:10px;
+          width:100%;
+          padding:10px 12px;
+          border:1px solid var(--line);
+          border-radius:10px;
+          background:#111113;
+          color:var(--ink);
+          cursor:pointer;
+          text-align:left;
+          font-family:'Inter',sans-serif;
+        }
+
+        .melee-app .avatar {
+          width:34px;
+          height:34px;
+          flex-shrink:0;
+          border-radius:50%;
+          background:var(--chalk);
+          border:1px solid var(--pitch);
+          color:var(--pitch);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          font-weight:600;
+          font-size:12px;
+          letter-spacing:.02em;
+        }
+
+        .melee-app .user-menu {
+          position:absolute;
+          left:12px;
+          right:12px;
+          bottom:72px;
+          background:var(--white);
+          border:1px solid var(--line);
+          border-radius:10px;
+          padding:6px;
+          box-shadow:0 12px 32px rgba(0,0,0,.5);
+          z-index:5;
+        }
+
+        .melee-app .app-body {
+          margin-left:var(--sidebar-w);
+          min-height:100vh;
+          display:flex;
+          flex-direction:column;
+        }
+
+        .melee-app .app-topbar {
+          position:sticky;
+          top:0;
+          z-index:30;
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:12px;
+          padding:14px 40px;
+          background:rgba(11,11,12,.86);
+          backdrop-filter:blur(10px);
+          -webkit-backdrop-filter:blur(10px);
+          border-bottom:1px solid var(--line);
+        }
+
+        .melee-app .topbar-title {
+          display:flex;
+          align-items:center;
+          gap:10px;
+          min-width:0;
+        }
+
+        .melee-app .crumb {
+          font-size:12px;
+          font-weight:600;
+          letter-spacing:.18em;
+          text-transform:uppercase;
+          color:var(--ink-light);
+          white-space:nowrap;
+          overflow:hidden;
+          text-overflow:ellipsis;
+        }
+
+        .melee-app .crumb strong {
+          color:var(--ink);
+          font-weight:600;
+        }
+
+        .melee-app .topbar-logo {
+          display:none;
+          align-items:center;
+          gap:10px;
+          background:none;
+          border:none;
+          padding:0;
+          color:inherit;
+          cursor:pointer;
+        }
+
+        .melee-app .topbar-logo img {
+          width:30px;
+          height:auto;
+        }
+
+        .melee-app .header-icon-btn,
+        .melee-app .menu-btn {
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          width:40px;
+          height:40px;
+          border-radius:9px;
+          background:var(--white);
+          border:1px solid var(--line);
+          color:var(--ink);
+          cursor:pointer;
+        }
+
+        .melee-app .header-icon-btn:hover {
+          border-color:#3A3A3F;
+        }
+
+        .melee-app .menu-btn {
+          display:none;
+        }
+
+        .melee-app .app-main {
+          width:100%;
+          max-width:1200px;
+          margin:0 auto;
+          padding:32px 40px 80px;
+        }
+
+        .melee-app .sidebar-backdrop {
+          display:none;
+        }
+
+        .melee-app .auth-main {
+          max-width:none;
+          padding:0;
+        }
+
+        @media (max-width: 960px) {
+          .melee-app .app-sidebar {
+            transform:translateX(-100%);
+            box-shadow:none;
+          }
+
+          .melee-app .app-sidebar.open {
+            transform:none;
+            box-shadow:12px 0 40px rgba(0,0,0,.6);
+          }
+
+          .melee-app .sidebar-backdrop.open {
+            display:block;
+            position:fixed;
+            inset:0;
+            background:rgba(0,0,0,.6);
+            z-index:35;
+          }
+
+          .melee-app .app-body {
+            margin-left:0;
+          }
+
+          .melee-app .menu-btn,
+          .melee-app .topbar-logo {
+            display:inline-flex;
+          }
+
+          .melee-app .topbar-title .crumb {
+            display:none;
+          }
+
+          .melee-app .app-topbar {
+            padding:10px 16px;
+          }
+
+          .melee-app .app-main {
+            padding:22px 16px 80px;
+          }
+
+          .melee-app h1.font-display {
+            font-size:28px;
+          }
+        }
+
+        /* ---------- Connexion ---------- */
+
+        .melee-app .auth-screen {
+          min-height:100vh;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          padding:32px 16px;
+          background:
+            radial-gradient(ellipse 60% 50% at 50% 0%, rgba(255,237,0,.08), transparent 70%),
+            var(--bg);
+        }
+
+        .melee-app .auth-card {
+          width:100%;
+          max-width:400px;
+          display:flex;
+          flex-direction:column;
+          gap:24px;
+        }
+
+        .melee-app .auth-brand {
+          display:flex;
+          flex-direction:column;
+          align-items:center;
+          gap:12px;
+          text-align:center;
+        }
+
+        .melee-app .auth-brand img {
+          width:112px;
+          height:auto;
+        }
+
+        .melee-app .auth-card .modal-card {
+          max-width:none !important;
+          padding:28px;
+        }
+
+        /* ---------- Accueil ---------- */
+
+        .melee-app .eyebrow {
+          font-size:12px;
+          font-weight:600;
+          letter-spacing:.2em;
+          text-transform:uppercase;
+          color:var(--pitch);
+        }
+
+        .melee-app .home-hero {
+          display:flex;
+          align-items:flex-end;
+          justify-content:space-between;
+          flex-wrap:wrap;
+          gap:16px;
+          margin-bottom:28px;
+        }
+
+        .melee-app .home-hero h1 {
+          margin:6px 0 0;
+          font-size:46px;
+        }
+
+        .melee-app .home-stats {
+          display:grid;
+          grid-template-columns:repeat(4, minmax(0, 1fr));
+          gap:16px;
+        }
+
+        .melee-app .stat-card.highlight {
+          background:var(--pitch);
+          border-color:var(--pitch);
+          color:var(--on-pitch);
+          cursor:pointer;
+          text-align:left;
+          font-family:'Inter',sans-serif;
+        }
+
+        .melee-app .home-grid {
+          display:grid;
+          grid-template-columns:minmax(0, 1.4fr) minmax(0, 1fr);
+          gap:16px;
+          margin-top:16px;
+        }
+
+        .melee-app .panel {
+          background:var(--white);
+          border:1px solid var(--line);
+          border-radius:14px;
+          padding:22px 24px;
+        }
+
+        .melee-app .panel-head {
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:12px;
+          margin-bottom:8px;
+        }
+
+        .melee-app .panel-head h2 {
+          margin:0;
+          font-size:20px;
+        }
+
+        .melee-app .link-btn {
+          background:none;
+          border:none;
+          color:var(--pitch);
+          font-family:'Inter',sans-serif;
+          font-size:13px;
+          font-weight:600;
+          cursor:pointer;
+          padding:6px 0;
+        }
+
+        .melee-app .link-btn:hover {
+          text-decoration:underline;
+        }
+
+        .melee-app .agenda-row {
+          display:flex;
+          align-items:center;
+          gap:16px;
+          padding:13px 0;
+          border-top:1px solid var(--line);
+        }
+
+        .melee-app .agenda-date {
+          width:46px;
+          flex-shrink:0;
+          text-align:center;
+        }
+
+        .melee-app .agenda-date b {
+          display:block;
+          font-family:'Barlow Condensed',sans-serif;
+          font-weight:700;
+          font-size:26px;
+          line-height:1;
+        }
+
+        .melee-app .agenda-date span {
+          font-size:10.5px;
+          letter-spacing:.12em;
+          text-transform:uppercase;
+          color:var(--ink-light);
+        }
+
+        .melee-app .agenda-bar {
+          width:3px;
+          height:36px;
+          border-radius:2px;
+          flex-shrink:0;
+        }
+
+        .melee-app .progress {
+          height:6px;
+          background:#26262A;
+          border-radius:3px;
+          overflow:hidden;
+        }
+
+        .melee-app .progress > div {
+          height:100%;
+          background:var(--pitch);
+          border-radius:3px;
+        }
+
+        .melee-app .quick-grid {
+          display:grid;
+          grid-template-columns:repeat(4, minmax(0, 1fr));
+          gap:12px;
+          margin-top:16px;
+        }
+
+        .melee-app .quick-tile {
+          display:flex;
+          align-items:center;
+          gap:12px;
+          padding:16px;
+          border-radius:12px;
+          border:1px solid var(--line);
+          background:var(--white);
+          color:var(--ink);
+          font-family:'Inter',sans-serif;
+          font-size:14px;
+          font-weight:600;
+          cursor:pointer;
+          text-align:left;
+          transition:border-color .15s, transform .15s;
+        }
+
+        .melee-app .quick-tile:hover {
+          border-color:rgba(255,237,0,.55);
+          transform:translateY(-1px);
+        }
+
+        .melee-app .quick-tile .qi {
+          width:36px;
+          height:36px;
+          border-radius:9px;
           background:var(--pitch-tint);
-          color:var(--pitch-dark);
+          color:var(--pitch);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          flex-shrink:0;
+        }
+
+        @media (max-width: 1100px) {
+          .melee-app .home-stats,
+          .melee-app .quick-grid {
+            grid-template-columns:repeat(2, minmax(0, 1fr));
+          }
+
+          .melee-app .home-grid {
+            grid-template-columns:minmax(0, 1fr);
+          }
+        }
+
+        @media (max-width: 960px) {
+          .melee-app .home-hero h1 {
+            font-size:34px;
+          }
         }
 
         .melee-app .chat-drawer-toggle {
@@ -13266,8 +13870,8 @@ export default function MeleeApp() {
           flex-direction:column;
           align-items:center;
           gap:2px;
-          background:var(--pitch-dark);
-          color:var(--chalk);
+          background:var(--pitch);
+          color:var(--on-pitch);
           border:none;
           border-radius:8px 0 0 8px;
           padding:12px 6px;
@@ -13283,7 +13887,7 @@ export default function MeleeApp() {
           max-width:88vw;
           background:var(--white);
           border-left:1px solid var(--line);
-          box-shadow:-8px 0 24px rgba(22,20,10,.1);
+          box-shadow:-12px 0 40px rgba(0,0,0,.55);
           z-index:65;
           display:flex;
           flex-direction:column;
@@ -13297,21 +13901,29 @@ export default function MeleeApp() {
         }
 
         .melee-app .pitch-divider {
-          height:6px;
-          margin:16px 0;
-          background-image:repeating-linear-gradient(
-            90deg,
-            var(--line) 0 14px,
-            transparent 14px 22px
-          );
+          position:relative;
+          height:1px;
+          margin:20px 0;
+          background:var(--line);
+        }
+
+        .melee-app .pitch-divider::before {
+          content:'';
+          position:absolute;
+          left:0;
+          top:-1px;
+          width:48px;
+          height:3px;
+          border-radius:2px;
+          background:var(--pitch);
         }
 
         .melee-app .card,
         .melee-app .stat-card {
           background:var(--white);
           border:1px solid var(--line);
-          border-radius:12px;
-          padding:16px;
+          border-radius:14px;
+          padding:18px 20px;
         }
 
         .melee-app .card {
@@ -13321,13 +13933,15 @@ export default function MeleeApp() {
 
         .melee-app .card:hover {
           transform:translateY(-2px);
-          box-shadow:0 6px 16px rgba(22,53,42,.08);
+          border-color:rgba(255,237,0,.45);
+          box-shadow:0 10px 28px rgba(0,0,0,.45);
         }
 
         .melee-app .score {
-          font-family:'Oswald',sans-serif;
-          font-size:22px;
-          font-weight:600;
+          font-family:'Barlow Condensed',sans-serif;
+          font-size:24px;
+          font-weight:700;
+          line-height:1.05;
         }
 
         .melee-app .pill {
@@ -13352,47 +13966,90 @@ export default function MeleeApp() {
         }
 
         .melee-app .btn-primary {
-          background:var(--pitch-dark);
-          color:var(--chalk);
+          background:var(--pitch);
+          color:var(--on-pitch);
+          font-family:'Inter',sans-serif;
           font-weight:600;
           font-size:14px;
-          padding:9px 16px;
+          min-height:40px;
+          padding:9px 18px;
           border-radius:9px;
           border:none;
+          transition:filter .15s, transform .15s;
+        }
+
+        .melee-app .btn-primary:hover:not(:disabled) {
+          filter:brightness(1.08);
         }
 
         .melee-app .btn-secondary {
-          background:var(--white);
+          background:var(--chalk);
           color:var(--ink);
+          font-family:'Inter',sans-serif;
           font-weight:600;
           font-size:14px;
+          min-height:40px;
           padding:9px 16px;
           border-radius:9px;
-          border:1px solid var(--line);
+          border:1px solid #2E2E33;
+          transition:border-color .15s;
+        }
+
+        .melee-app .btn-secondary:hover:not(:disabled) {
+          border-color:#45454B;
         }
 
         .melee-app .icon-btn {
-          width:32px;
-          height:32px;
+          width:34px;
+          height:34px;
           border-radius:8px;
-          border:1px solid var(--line);
-          background:var(--white);
+          border:1px solid #2E2E33;
+          background:var(--chalk);
           color:var(--ink-light);
         }
 
+        .melee-app .icon-btn:hover:not(:disabled) {
+          color:var(--ink);
+          border-color:#45454B;
+        }
+
+        .melee-app input:not([type]),
         .melee-app input[type=text],
+        .melee-app input[type=search],
+        .melee-app input[type=email],
+        .melee-app input[type=number],
+        .melee-app input[type=tel],
+        .melee-app input[type=url],
+        .melee-app input[type=time],
+        .melee-app input[type=month],
+        .melee-app input[type=week],
+        .melee-app input[type=datetime-local],
         .melee-app input[type=password],
         .melee-app input[type=date],
         .melee-app textarea,
         .melee-app select {
           width:100%;
-          border:1px solid var(--line);
+          border:1px solid #2E2E33;
           border-radius:8px;
-          padding:8px 10px;
-          font-family:'Work Sans',sans-serif;
+          padding:9px 11px;
+          font-family:'Inter',sans-serif;
           font-size:14px;
-          background:var(--white);
+          background:#0F0F11;
           color:var(--ink);
+          transition:border-color .15s, box-shadow .15s;
+        }
+
+        .melee-app input:focus,
+        .melee-app textarea:focus,
+        .melee-app select:focus {
+          outline:none;
+          border-color:var(--pitch);
+          box-shadow:0 0 0 3px rgba(255,237,0,.15);
+        }
+
+        .melee-app input::placeholder,
+        .melee-app textarea::placeholder {
+          color:#6E6C66;
         }
 
         .melee-app label {
@@ -13407,8 +14064,8 @@ export default function MeleeApp() {
         .melee-app .modal-overlay {
           position:fixed;
           inset:0;
-          background:rgba(22,53,42,.45);
-          backdrop-filter:blur(2px);
+          background:rgba(0,0,0,.72);
+          backdrop-filter:blur(4px);
           display:flex;
           align-items:center;
           justify-content:center;
@@ -13419,8 +14076,10 @@ export default function MeleeApp() {
         .melee-app .modal-card {
           position:relative;
           background:var(--white);
-          border-radius:14px;
-          padding:22px;
+          border:1px solid var(--line);
+          box-shadow:0 24px 64px rgba(0,0,0,.6);
+          border-radius:16px;
+          padding:24px;
           width:100%;
           max-width:420px;
           max-height:90vh;
@@ -13428,7 +14087,7 @@ export default function MeleeApp() {
         }
 
         .melee-app .calendar-cell {
-          aspect-ratio:1;
+          aspect-ratio:1.2;
           border:1px solid var(--line);
           border-radius:8px;
           display:flex;
@@ -13449,8 +14108,9 @@ export default function MeleeApp() {
           bottom:20px;
           right:20px;
           z-index:60;
-          background:var(--red);
-          color:white;
+          background:#B42318;
+          color:#FFFFFF;
+          box-shadow:0 12px 32px rgba(0,0,0,.5);
           padding:10px 16px;
           border-radius:9px;
           font-size:13px;
@@ -13512,7 +14172,7 @@ export default function MeleeApp() {
         }
 
         .melee-app .workflow-board-tab-icon:hover {
-          background:rgba(22,20,10,.08);
+          background:rgba(0,0,0,.35);
           color:var(--ink);
         }
 
@@ -13571,12 +14231,12 @@ export default function MeleeApp() {
           height:440px;
           border:1px solid var(--line);
           border-radius:12px;
-          background-color:#B0B0B0;
+          background-color:#0F0F11;
           background-image:
-            linear-gradient(to right, #9C9C9C 1px, transparent 1px),
-            linear-gradient(to bottom, #9C9C9C 1px, transparent 1px),
-            linear-gradient(to right, #868686 1px, transparent 1px),
-            linear-gradient(to bottom, #868686 1px, transparent 1px);
+            linear-gradient(to right, #1B1B1E 1px, transparent 1px),
+            linear-gradient(to bottom, #1B1B1E 1px, transparent 1px),
+            linear-gradient(to right, #26262A 1px, transparent 1px),
+            linear-gradient(to bottom, #26262A 1px, transparent 1px);
           overflow:hidden;
           user-select:none;
         }
@@ -13606,7 +14266,7 @@ export default function MeleeApp() {
           background:var(--white);
           border-radius:10px;
           border:1px solid var(--line);
-          box-shadow:0 2px 8px rgba(22,20,10,.08);
+          box-shadow:0 2px 8px rgba(0,0,0,.35);
           padding:10px 12px;
           cursor:grab;
           z-index:2;
@@ -13614,12 +14274,12 @@ export default function MeleeApp() {
 
         .melee-app .workflow-node.is-dragging {
           cursor:grabbing;
-          box-shadow:0 8px 20px rgba(22,20,10,.18);
+          box-shadow:0 8px 20px rgba(0,0,0,.55);
           z-index:5;
         }
 
         .melee-app .workflow-node.is-connect-source {
-          box-shadow:0 0 0 3px var(--amber), 0 8px 20px rgba(22,20,10,.18);
+          box-shadow:0 0 0 3px var(--amber), 0 8px 20px rgba(0,0,0,.55);
           z-index:5;
         }
 
@@ -13747,7 +14407,7 @@ export default function MeleeApp() {
           min-height:60px;
           border:none;
           background:transparent;
-          font-family:'Work Sans',sans-serif;
+          font-family:'Inter',sans-serif;
           font-size:12px;
           color:var(--tan-text);
           resize:vertical;
@@ -13792,279 +14452,352 @@ export default function MeleeApp() {
         }
       `}</style>
 
-      {/* HEADER */}
-
-      <header className="app-header">
-        <div className="flex items-center gap-2">
-          <span className="logo-mark" />
-
-          <span
-            className="font-display text-sm"
-            style={{
-              textTransform:'uppercase',
-              letterSpacing:'.12em',
-            }}
-          >
-            Mêlée
-          </span>
-        </div>
-
-        {session && (
-          <div className="flex items-center gap-2">
-            <button
-              className="header-icon-btn"
-              onClick={async () => {
-                setSyncing(true);
-                await loadData();
-                setSyncing(false);
-              }}
-            >
-              <RefreshCw
-                size={14}
-                className={
-                  syncing
-                    ? 'animate-spin'
-                    : ''
-                }
-              />
-            </button>
-
-            {session.role === 'admin' && (
-              <button
-                className="header-icon-btn"
-                onClick={() =>
-                  goToTab('admin')
-                }
-              >
-                <Shield size={15} />
-              </button>
-            )}
-
-            <button
-              className="user-badge"
-              onClick={() =>
-                setShowUserMenu(
-                  (v) => !v
-                )
-              }
-            >
-              <User size={13} />
-              {session.displayName}
-            </button>
-
-            {showUserMenu && (
-              <div
-                style={{
-                  position:'absolute',
-                  top:60,
-                  right:20,
-                  background:'white',
-                  border:'1px solid var(--line)',
-                  borderRadius:10,
-                  padding:6,
-                  zIndex:100,
-                }}
-              >
-                <button
-                  className="btn-secondary"
-                  onClick={handleLogout}
-                >
-                  <LogOut size={14} />
-                  Se déconnecter
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </header>
-
-      {/* NAV */}
+      {/* VOLET LATÉRAL */}
 
       {session && (
-        <nav className="app-nav">
-          {NAV_ITEMS.map((item) => {
-            if (!item.children) {
-              return (
-                <button
-                  key={item.id}
-                  className={`nav-tab ${
-                    activeTab === item.id
-                      ? 'active'
-                      : ''
-                  }`}
-                  onClick={() =>
-                    goToTab(item.id)
-                  }
-                >
-                  <item.icon size={15} />
-                  {item.label}
+        <>
+          <aside
+            className={`app-sidebar ${
+              sidebarOpen ? 'open' : ''
+            }`}
+          >
+            <button
+              className="sidebar-brand"
+              onClick={() => goToTab('home')}
+              aria-label="Retour à l'accueil"
+            >
+              <img
+                src="/logo-club.png"
+                alt="Logo US Baumoise Rugby"
+              />
+              <div>
+                <div className="brand-name">MÊLÉE</div>
+                <div className="brand-sub">
+                  US Baumoise · L'Entente
+                </div>
+              </div>
+            </button>
 
-                  {item.stub && (
-                    <span className="stub-dot" />
-                  )}
-                </button>
-              );
-            }
-
-            const isActiveGroup =
-              item.children.some(
-                (child) =>
-                  child.id === activeTab
-              );
-
-            return (
-              <div
-                key={item.id}
-                className="nav-dropdown"
-                onMouseEnter={(e) =>
-                  openNavDropdown(
-                    item,
-                    e.currentTarget
-                  )
-                }
-                onMouseLeave={scheduleNavClose}
-              >
-                <button
-                  className={`nav-tab ${
-                    isActiveGroup ? 'active' : ''
-                  }`}
-                  onClick={(e) =>
-                    openNavDropdown(
-                      item,
-                      e.currentTarget
-                        .parentElement
-                    )
-                  }
-                >
-                  <item.icon size={15} />
-                  {item.label}
-                </button>
-
-                {openNavMenu === item.id &&
-                  createPortal(
-                    <div
-                      className="nav-dropdown-menu"
-                      style={{
-                        top: navMenuPos.top,
-                        left: navMenuPos.left,
-                      }}
-                      onMouseEnter={
-                        cancelNavClose
-                      }
-                      onMouseLeave={
-                        scheduleNavClose
+            <nav className="sidebar-nav">
+              {NAV_ITEMS.map((item) => {
+                if (!item.children) {
+                  return (
+                    <button
+                      key={item.id}
+                      className={`side-link ${
+                        activeTab === item.id
+                          ? 'active'
+                          : ''
+                      }`}
+                      onClick={() =>
+                        goToTab(item.id)
                       }
                     >
-                      {item.children.map(
-                        (child) => (
-                          <button
-                            key={child.id}
-                            className={`nav-dropdown-item ${
-                              activeTab ===
-                              child.id
-                                ? 'active'
-                                : ''
-                            }`}
-                            onClick={() => {
-                              goToTab(child.id);
-                              setOpenNavMenu(
-                                null
-                              );
-                            }}
-                          >
-                            <child.icon
-                              size={14}
-                            />
-                            {child.label}
-
-                            {child.stub && (
-                              <span className="stub-dot" />
-                            )}
-                          </button>
-                        )
+                      <item.icon size={17} />
+                      {item.label}
+                      {item.stub && (
+                        <span className="stub-dot" />
                       )}
-                    </div>,
-                    document.body
-                  )}
-              </div>
-            );
-          })}
+                    </button>
+                  );
+                }
 
-          {session.role === 'admin' && (
-            <button
-              className={`nav-tab ${
-                activeTab === 'admin'
-                  ? 'active'
-                  : ''
-              }`}
-              onClick={() =>
-                goToTab('admin')
-              }
+                const isActiveGroup =
+                  item.children.some(
+                    (child) =>
+                      child.id === activeTab
+                  );
+
+                const isOpen =
+                  isActiveGroup ||
+                  openNavGroups.includes(item.id);
+
+                return (
+                  <div key={item.id}>
+                    <button
+                      className={`side-link ${
+                        isActiveGroup
+                          ? 'group-active'
+                          : ''
+                      }`}
+                      aria-expanded={isOpen}
+                      onClick={() =>
+                        setOpenNavGroups((g) =>
+                          g.includes(item.id)
+                            ? g.filter(
+                                (x) => x !== item.id
+                              )
+                            : [...g, item.id]
+                        )
+                      }
+                    >
+                      <item.icon size={17} />
+                      {item.label}
+                      <ChevronRight
+                        size={15}
+                        className={`chev ${
+                          isOpen ? 'open' : ''
+                        }`}
+                      />
+                    </button>
+
+                    {isOpen && (
+                      <div className="side-sub">
+                        {item.children.map(
+                          (child) => (
+                            <button
+                              key={child.id}
+                              className={`side-link ${
+                                activeTab ===
+                                child.id
+                                  ? 'active'
+                                  : ''
+                              }`}
+                              onClick={() =>
+                                goToTab(child.id)
+                              }
+                            >
+                              {child.label}
+                              {child.stub && (
+                                <span className="stub-dot" />
+                              )}
+                            </button>
+                          )
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {session.role === 'admin' && (
+                <>
+                  <div className="sidebar-section">
+                    Gestion
+                  </div>
+                  <button
+                    className={`side-link ${
+                      activeTab === 'admin'
+                        ? 'active'
+                        : ''
+                    }`}
+                    onClick={() =>
+                      goToTab('admin')
+                    }
+                  >
+                    <Shield size={17} />
+                    Administration
+                  </button>
+                </>
+              )}
+            </nav>
+
+            <div
+              className="sidebar-foot"
+              style={{ position: 'relative' }}
             >
-              <Shield size={15} />
-              Administration
-            </button>
-          )}
-        </nav>
+              {showUserMenu && (
+                <div className="user-menu">
+                  <button
+                    className="side-link"
+                    onClick={handleLogout}
+                  >
+                    <LogOut size={15} />
+                    Se déconnecter
+                  </button>
+                </div>
+              )}
+
+              <button
+                className="user-card"
+                onClick={() =>
+                  setShowUserMenu((v) => !v)
+                }
+                aria-expanded={showUserMenu}
+              >
+                <span className="avatar">
+                  {initialsOf(session.displayName)}
+                </span>
+                <span
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    minWidth: 0,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {session.displayName}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--ink-light)',
+                    }}
+                  >
+                    {session.role === 'admin'
+                      ? 'Administrateur'
+                      : 'Membre'}
+                  </span>
+                </span>
+              </button>
+            </div>
+          </aside>
+
+          <div
+            className={`sidebar-backdrop ${
+              sidebarOpen ? 'open' : ''
+            }`}
+            onClick={() => setSidebarOpen(false)}
+          />
+        </>
       )}
 
-      {/* MAIN */}
+      <div className={session ? 'app-body' : ''}>
+        {session && (
+          <header className="app-topbar">
+            <div className="topbar-title">
+              <button
+                className="menu-btn"
+                aria-label="Ouvrir le menu"
+                onClick={() => setSidebarOpen(true)}
+              >
+                <Menu size={18} />
+              </button>
 
-      <main
-        className="max-w-5xl mx-auto"
-        style={{
-          padding:'20px 16px 60px',
-        }}
-      >
+              <button
+                className="topbar-logo"
+                onClick={() => goToTab('home')}
+                aria-label="Accueil"
+              >
+                <img
+                  src="/logo-club.png"
+                  alt=""
+                />
+                <span className="brand-name" style={{ fontSize: 20 }}>
+                  MÊLÉE
+                </span>
+              </button>
+
+              <span className="crumb">
+                Mêlée
+                {currentNavLabel.group && (
+                  <> · {currentNavLabel.group}</>
+                )}{' '}
+                · <strong>{currentNavLabel.label}</strong>
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                className="header-icon-btn"
+                aria-label="Actualiser les données"
+                title="Actualiser"
+                onClick={async () => {
+                  setSyncing(true);
+                  await loadData();
+                  setSyncing(false);
+                }}
+              >
+                <RefreshCw
+                  size={15}
+                  className={
+                    syncing ? 'animate-spin' : ''
+                  }
+                />
+              </button>
+            </div>
+          </header>
+        )}
+
+      <main className={session ? 'app-main' : 'auth-main'}>
         {!dataLoaded ? (
           <div
             className="flex items-center justify-center"
             style={{
-              padding:'80px 0',
+              padding:'120px 0',
+              color:'var(--pitch)',
             }}
           >
             <Loader2
-              size={28}
+              size={30}
               className="animate-spin"
             />
           </div>
         ) : !session ? (
-          users.length === 0 ? (
-            <BootstrapAdminForm
-              onCreate={
-                handleBootstrapCreate
-              }
-              busy={authBusy}
-            />
-          ) : (
-            <LoginForm
-              onLogin={handleLogin}
-              busy={authBusy}
-              error={authError}
-            />
-          )
+          <div className="auth-screen">
+            <div className="auth-card">
+              <div className="auth-brand">
+                <img
+                  src="/logo-club.png"
+                  alt="Logo US Baumoise Rugby"
+                />
+                <div>
+                  <div
+                    className="brand-name"
+                    style={{ fontSize: 40 }}
+                  >
+                    MÊLÉE
+                  </div>
+                  <div className="brand-sub">
+                    US Baumoise Rugby · L'Entente
+                  </div>
+                </div>
+              </div>
+
+              {users.length === 0 ? (
+                <BootstrapAdminForm
+                  onCreate={
+                    handleBootstrapCreate
+                  }
+                  busy={authBusy}
+                />
+              ) : (
+                <LoginForm
+                  onLogin={handleLogin}
+                  busy={authBusy}
+                  error={authError}
+                />
+              )}
+            </div>
+          </div>
         ) : (
           <>
             {/* ACCUEIL */}
 
             {activeTab === 'home' && (
               <div>
-                <h1 className="font-display text-2xl">
-                  Bonjour, {session.displayName} 👋
-                </h1>
+                <div className="home-hero">
+                  <div>
+                    <div className="eyebrow">
+                      {capitalizeFirst(todayLabelFR)}
+                    </div>
+                    <h1 className="font-display">
+                      Bonjour {session.displayName}
+                    </h1>
+                  </div>
 
-                <p
-                  className="text-sm mt-1"
-                  style={{
-                    color:'var(--ink-light)',
-                  }}
-                >
-                  {todayLabelFR}
-                </p>
+                  <button
+                    className="btn-primary"
+                    onClick={() => {
+                      goToTab('projects');
+                      setEditingProject(null);
+                      setShowProjectForm(true);
+                    }}
+                  >
+                    <Plus size={16} />
+                    Nouveau projet
+                  </button>
+                </div>
 
-                <div className="pitch-divider" />
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="home-stats">
                   <StatCard
                     icon={FolderKanban}
                     label="Projets en cours"
@@ -14083,63 +14816,276 @@ export default function MeleeApp() {
                     value={overdueTasksCount}
                     danger
                   />
-                </div>
 
-                <div className="mt-8">
-                  <h2 className="font-display text-lg mb-2">
-                    Prochaines échéances
-                  </h2>
-
-                  {upcomingTasks.length ===
-                  0 ? (
-                    <p
-                      className="text-sm"
-                      style={{
-                        color:
-                          'var(--ink-light)',
-                      }}
+                  <button
+                    className="stat-card highlight"
+                    onClick={() => goToTab('planning')}
+                  >
+                    <div
+                      className="text-xs font-bold uppercase"
+                      style={{ letterSpacing: '0.14em' }}
                     >
-                      Aucune échéance pour
-                      l'instant.
-                    </p>
-                  ) : (
-                    upcomingTasks.map(
-                      (task) => (
-                        <div
-                          key={task.id}
-                          className="flex items-center justify-between py-2"
+                      Prochain rendez-vous
+                    </div>
+                    {nextEvent ? (
+                      <>
+                        <p
+                          className="score mt-2"
+                          style={{ fontSize: 24 }}
+                        >
+                          {formatAgendaDay(nextEvent.date)}
+                          {nextEvent.time
+                            ? ` · ${nextEvent.time.slice(0, 5)}`
+                            : ''}
+                        </p>
+                        <p
+                          className="text-sm mt-1"
                           style={{
-                            borderBottom:
-                              '1px solid var(--line)',
+                            fontWeight: 500,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
                           }}
                         >
-                          <div>
-                            <p className="text-sm font-medium">
-                              {task.title}
-                            </p>
+                          {nextEvent.title}
+                        </p>
+                      </>
+                    ) : (
+                      <p
+                        className="text-sm mt-2"
+                        style={{ fontWeight: 500 }}
+                      >
+                        Rien de prévu pour l'instant.
+                      </p>
+                    )}
+                  </button>
+                </div>
 
-                            <p
-                              className="text-xs"
+                <div className="home-grid">
+                  <section className="panel">
+                    <div className="panel-head">
+                      <h2 className="font-display">
+                        Les 7 prochains jours
+                      </h2>
+                      <button
+                        className="link-btn"
+                        onClick={() =>
+                          goToTab('planning')
+                        }
+                      >
+                        Voir le planning
+                      </button>
+                    </div>
+
+                    {weekAgenda.length === 0 ? (
+                      <p
+                        className="text-sm"
+                        style={{
+                          color: 'var(--ink-light)',
+                          padding: '12px 0',
+                        }}
+                      >
+                        Aucun événement ni échéance
+                        cette semaine.
+                      </p>
+                    ) : (
+                      weekAgenda.map((item) => {
+                        const d = new Date(
+                          item.date + 'T00:00:00'
+                        );
+                        return (
+                          <div
+                            key={item.key}
+                            className="agenda-row"
+                          >
+                            <div className="agenda-date">
+                              <b>{d.getDate()}</b>
+                              <span>
+                                {DAYS_FR[(d.getDay() + 6) % 7]}
+                              </span>
+                            </div>
+                            <div
+                              className="agenda-bar"
                               style={{
-                                color:
-                                  'var(--ink-light)',
+                                background: item.late
+                                  ? 'var(--red)'
+                                  : item.kind === 'event'
+                                  ? 'var(--pitch)'
+                                  : '#6E6C66',
+                              }}
+                            />
+                            <div
+                              style={{
+                                flex: 1,
+                                minWidth: 0,
                               }}
                             >
-                              {getProject(
-                                task.projectId
-                              )?.name}
-                            </p>
+                              <p className="text-sm font-semibold">
+                                {item.title}
+                              </p>
+                              <p
+                                className="text-xs"
+                                style={{
+                                  color: 'var(--ink-light)',
+                                  marginTop: 2,
+                                }}
+                              >
+                                {item.subtitle}
+                              </p>
+                            </div>
+                            <span
+                              className="pill"
+                              style={{
+                                background: item.late
+                                  ? 'var(--red-tint)'
+                                  : item.kind === 'event'
+                                  ? 'var(--pitch-tint)'
+                                  : 'var(--chalk)',
+                                color: item.late
+                                  ? 'var(--red)'
+                                  : item.kind === 'event'
+                                  ? 'var(--pitch)'
+                                  : 'var(--ink-light)',
+                              }}
+                            >
+                              {item.late
+                                ? 'En retard'
+                                : item.kind === 'event'
+                                ? 'Événement'
+                                : 'Tâche'}
+                            </span>
                           </div>
+                        );
+                      })
+                    )}
+                  </section>
 
-                          <span className="text-xs">
-                            {formatDateFR(
-                              task.dueDate
-                            )}
-                          </span>
-                        </div>
-                      )
-                    )
-                  )}
+                  <section className="panel">
+                    <div className="panel-head">
+                      <h2 className="font-display">
+                        Projets en cours
+                      </h2>
+                      <button
+                        className="link-btn"
+                        onClick={() =>
+                          goToTab('projects')
+                        }
+                      >
+                        Tous les projets
+                      </button>
+                    </div>
+
+                    {projectProgress.length === 0 ? (
+                      <p
+                        className="text-sm"
+                        style={{
+                          color: 'var(--ink-light)',
+                          padding: '12px 0',
+                        }}
+                      >
+                        Aucun projet en cours.
+                      </p>
+                    ) : (
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 18,
+                          marginTop: 10,
+                        }}
+                      >
+                        {projectProgress.map((p) => (
+                          <button
+                            key={p.id}
+                            onClick={() => {
+                              goToTab('projects');
+                              setSelectedProjectId(p.id);
+                            }}
+                            style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 8,
+                              background: 'none',
+                              border: 'none',
+                              padding: 0,
+                              color: 'inherit',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              fontFamily: 'inherit',
+                            }}
+                          >
+                            <span
+                              style={{
+                                display: 'flex',
+                                justifyContent:
+                                  'space-between',
+                                gap: 12,
+                                fontSize: 14,
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {p.name}
+                              </span>
+                              <span
+                                style={{
+                                  color: 'var(--ink-light)',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {p.total === 0
+                                  ? 'Aucune tâche'
+                                  : `${p.done}/${p.total} · ${p.pct} %`}
+                              </span>
+                            </span>
+                            <span
+                              className="progress"
+                              style={{ display: 'block' }}
+                            >
+                              <span
+                                style={{
+                                  display: 'block',
+                                  width: `${p.pct}%`,
+                                  height: '100%',
+                                  background: 'var(--pitch)',
+                                  borderRadius: 3,
+                                }}
+                              />
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                </div>
+
+                <div className="quick-grid">
+                  {[
+                    { id: 'planning', label: 'Planning', icon: CalendarDays },
+                    { id: 'docs', label: 'Documents', icon: FileText },
+                    { id: 'finance', label: 'Finance', icon: Wallet },
+                    { id: 'minibus', label: "Gestion de l'entente", icon: Bus },
+                  ].map((q) => (
+                    <button
+                      key={q.id}
+                      className="quick-tile"
+                      onClick={() => goToTab(q.id)}
+                    >
+                      <span className="qi">
+                        <q.icon size={18} />
+                      </span>
+                      <span style={{ flex: 1 }}>
+                        {q.label}
+                      </span>
+                      <ArrowRight
+                        size={16}
+                        style={{ color: 'var(--ink-light)' }}
+                      />
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
@@ -16827,6 +17773,7 @@ export default function MeleeApp() {
                 fuel: sum(filteredTrips, 'fuelCost'),
                 wear: sum(filteredTrips, 'wearCost'),
                 total: sum(filteredTrips, 'totalCost'),
+                shares: sumTripShares(filteredTrips),
               };
 
               const periodLabel =
@@ -16996,6 +17943,27 @@ export default function MeleeApp() {
                         />
                       </div>
 
+                      {/* RÉPARTITION OB / USB (au prorata des effectifs) */}
+
+                      <div className="grid grid-cols-2 gap-3 mt-3">
+                        <StatCard
+                          icon={Users}
+                          label="Part USB"
+                          value={formatCurrency(stats.shares.usb)}
+                        />
+                        <StatCard
+                          icon={Users}
+                          label="Part OB"
+                          value={formatCurrency(stats.shares.ob)}
+                        />
+                      </div>
+                      <p className="text-xs mt-1" style={{ color: 'var(--ink-light)' }}>
+                        Coût total de chaque déplacement partagé selon le nombre
+                        de personnes OB et USB.
+                        {stats.shares.unassigned > 0 &&
+                          ` ${formatCurrency(stats.shares.unassigned)} non réparti (effectifs non saisis).`}
+                      </p>
+
                       {/* FILTRES */}
 
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
@@ -17118,13 +18086,15 @@ export default function MeleeApp() {
                               <th style={{ ...th, ...num }}>Carburant</th>
                               <th style={{ ...th, ...num }}>Usure</th>
                               <th style={{ ...th, ...num }}>Total</th>
+                              <th style={{ ...th, ...num }}>Part OB</th>
+                              <th style={{ ...th, ...num }}>Part USB</th>
                             </tr>
                           </thead>
                           <tbody>
                             {filteredTrips.length === 0 ? (
                               <tr>
                                 <td
-                                  colSpan={10}
+                                  colSpan={12}
                                   style={{ ...td, textAlign: 'center', color: 'var(--ink-light)', padding: 24 }}
                                 >
                                   Aucun déplacement pour ces filtres.
@@ -17137,7 +18107,7 @@ export default function MeleeApp() {
                                   onClick={() => setViewingTrip(t)}
                                   style={{
                                     cursor: 'pointer',
-                                    background: i % 2 ? '#FAF8F0' : 'transparent',
+                                    background: i % 2 ? '#18181B' : 'transparent',
                                   }}
                                 >
                                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
@@ -17148,7 +18118,8 @@ export default function MeleeApp() {
                                       <span
                                         className="text-xs font-semibold"
                                         style={{
-                                          background: '#FFF3C4',
+                                          background: 'var(--pitch-tint)',
+                                          color: 'var(--pitch)',
                                           borderRadius: 6,
                                           padding: '2px 8px',
                                           whiteSpace: 'nowrap',
@@ -17191,6 +18162,19 @@ export default function MeleeApp() {
                                   <td style={{ ...td, ...num, fontWeight: 700 }}>
                                     {formatCurrency(t.totalCost)}
                                   </td>
+                                  {(() => {
+                                    const sh = computeTripShares(t);
+                                    return (
+                                      <>
+                                        <td style={{ ...td, ...num }}>
+                                          {sh.ob != null ? formatCurrency(sh.ob) : '—'}
+                                        </td>
+                                        <td style={{ ...td, ...num }}>
+                                          {sh.usb != null ? formatCurrency(sh.usb) : '—'}
+                                        </td>
+                                      </>
+                                    );
+                                  })()}
                                 </tr>
                               ))
                             )}
@@ -17219,6 +18203,12 @@ export default function MeleeApp() {
                                 <td style={{ ...td, ...num, fontWeight: 700, color: '#E3B100', borderBottom: 'none' }}>
                                   {formatCurrency(stats.total)}
                                 </td>
+                                <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>
+                                  {formatCurrency(stats.shares.ob)}
+                                </td>
+                                <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>
+                                  {formatCurrency(stats.shares.usb)}
+                                </td>
                               </tr>
                             </tfoot>
                           )}
@@ -17245,7 +18235,7 @@ export default function MeleeApp() {
                         <div style={{ overflowX: 'auto', border: '1px solid var(--line)', borderRadius: 12, background: 'var(--white)' }}>
                           <table style={{ width: '100%', minWidth: 560, borderCollapse: 'collapse' }}>
                             <thead>
-                              <tr style={{ background: '#FFF3C4' }}>
+                              <tr style={{ background: 'var(--pitch-tint)' }}>
                                 <th style={th}>Saison</th>
                                 <th style={{ ...th, ...num }}>Déplacements</th>
                                 <th style={{ ...th, ...num }}>Kilomètres</th>
@@ -19066,6 +20056,7 @@ export default function MeleeApp() {
           </>
         )}
       </main>
+      </div>
 
       {/* CHAT (tiroir latéral) */}
 
