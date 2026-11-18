@@ -869,185 +869,384 @@ function formatClassCreneau(schoolClass) {
     : label;
 }
 
-function drawSchoolSessionsTable(
-  doc,
-  startY,
-  sessions,
-  exercises
-) {
-  const marginX = 15;
-  const pageWidth = 210;
-  const maxY = 280;
-  let y = startY;
+/* ---------- Charte PDF commune (modèle : export des déplacements) ---------- */
 
-  function ensureSpace(next) {
-    if (y + next > maxY) {
-      doc.addPage();
-      y = 20;
+const PDF_YELLOW = [227, 177, 0];
+const PDF_BLACK = [20, 20, 20];
+const PDF_ZEBRA = [246, 244, 236];
+const PDF_RULE = [225, 222, 210];
+const PDF_MUTED = [120, 120, 120];
+
+function pdfPageSize(doc) {
+  return {
+    W: doc.internal.pageSize.getWidth(),
+    H: doc.internal.pageSize.getHeight(),
+  };
+}
+
+// Bandeau noir + filet jaune + logo + titre jaune, identique aux déplacements.
+function pdfDrawBanner(doc, { logo, title, lines = [] }) {
+  const { W } = pdfPageSize(doc);
+  const M = 12;
+
+  doc.setFillColor(...PDF_BLACK);
+  doc.rect(0, 0, W, 30, 'F');
+  doc.setFillColor(...PDF_YELLOW);
+  doc.rect(0, 30, W, 1.6, 'F');
+
+  let titleX = M;
+  if (logo) {
+    try {
+      doc.addImage(logo, 'PNG', M, 4, 35, 22);
+      titleX = M + 40;
+    } catch (e) {
+      console.warn(e);
     }
   }
 
-  doc.setFontSize(9);
-  doc.setFont(undefined, 'bold');
-  doc.text('N°', marginX, y);
-  doc.text('Date', marginX + 10, y);
-  doc.text('Heure', marginX + 45, y);
-  doc.text('Exercices', marginX + 65, y);
-  doc.setFont(undefined, 'normal');
-  y += 3;
-  doc.setDrawColor(150, 150, 150);
-  doc.line(marginX, y, pageWidth - marginX, y);
-  y += 5;
+  const now = new Date();
+  const generated = `Document généré le ${now.toLocaleDateString('fr-FR')} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+  const maxTitleW = W - M - titleX;
 
-  if (sessions.length === 0) {
+  doc.setTextColor(...PDF_YELLOW);
+  doc.setFont('helvetica', 'bold');
+  let titleSize = 18;
+  doc.setFontSize(titleSize);
+  while (titleSize > 12 && doc.getTextWidth(title) > maxTitleW) {
+    titleSize -= 1;
+    doc.setFontSize(titleSize);
+  }
+  doc.text(doc.splitTextToSize(title, maxTitleW)[0], titleX, 13);
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  lines
+    .filter(Boolean)
+    .slice(0, 2)
+    .forEach((l, i) => {
+      doc.text(doc.splitTextToSize(l, maxTitleW)[0], titleX, 19.5 + i * 4.8);
+    });
+  doc.setFontSize(7);
+  doc.setTextColor(200, 200, 200);
+  doc.text(generated, W - M, 28, { align: 'right' });
+
+  return 40;
+}
+
+// Bas de page noir sur toutes les pages : club · module / saison / pagination.
+function pdfDrawFooters(doc, { moduleLabel, seasonLabel }) {
+  const { W, H } = pdfPageSize(doc);
+  const M = 12;
+  const pages = doc.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    doc.setPage(p);
+    doc.setFillColor(...PDF_BLACK);
+    doc.rect(0, H - 9, W, 9, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(`US Baumoise Rugby · ${moduleLabel}`, M, H - 3.5);
+    if (seasonLabel) {
+      doc.setTextColor(...PDF_YELLOW);
+      doc.text(`Saison ${seasonLabel}`, W / 2, H - 3.5, { align: 'center' });
+      doc.setTextColor(255, 255, 255);
+    }
+    doc.text(`Page ${p} / ${pages}`, W - M, H - 3.5, { align: 'right' });
+  }
+}
+
+// Titre de section : texte noir gras souligné d'un filet jaune.
+function pdfSectionTitle(doc, y, x, width, title, info) {
+  doc.setTextColor(...PDF_BLACK);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text(title, x, y + 5);
+  if (info) {
+    doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    doc.setTextColor(140, 140, 140);
-    doc.text(
-      'Aucune séance programmée.',
-      marginX,
-      y
-    );
-    doc.setTextColor(0, 0, 0);
-    y += 6;
-    return y;
+    doc.setTextColor(...PDF_MUTED);
+    doc.text(info, x + width, y + 5, { align: 'right' });
+  }
+  doc.setFillColor(...PDF_YELLOW);
+  doc.rect(x, y + 7, width, 0.8, 'F');
+  return y + 11;
+}
+
+/*
+  Tableau au style des déplacements : en-tête jaune, lignes zébrées,
+  filets beiges, en-tête répété après chaque saut de page.
+  rows : [{ cells: { key: string | string[] }, kind?: 'subtotal' | 'empty' }]
+*/
+function pdfTable(doc, { x0, y, cols, rows, emptyText }) {
+  const { H } = pdfPageSize(doc);
+  const bottom = H - 16;
+  const tableW = cols.reduce((s, c) => s + c.w, 0);
+
+  function drawHeader() {
+    doc.setFillColor(...PDF_YELLOW);
+    doc.rect(x0, y, tableW, 8, 'F');
+    doc.setTextColor(...PDF_BLACK);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    let x = x0;
+    cols.forEach((c) => {
+      doc.text(c.label, c.right ? x + c.w - 2 : x + 2, y + 5.4, {
+        align: c.right ? 'right' : 'left',
+      });
+      x += c.w;
+    });
+    y += 8;
+    doc.setFont('helvetica', 'normal');
   }
 
-  sessions.forEach((sess, idx) => {
-    const sessExercises = exercises.filter(
-      (e) => e.sessionId === sess.id
-    );
+  if (y + 16 > bottom) {
+    doc.addPage();
+    y = 14;
+  }
+  drawHeader();
 
-    const titles = sessExercises.length
-      ? sessExercises.map((e) => e.title).join(', ')
-      : '—';
-
-    const lines = doc.splitTextToSize(titles, 115);
-
-    ensureSpace(5 * lines.length + 2);
-
+  if (rows.length === 0) {
     doc.setFontSize(9);
-    doc.text(String(idx + 1), marginX, y);
-    doc.text(formatDateFR(sess.date), marginX + 10, y);
-    doc.text(sess.time || '—', marginX + 45, y);
-    doc.text(lines, marginX + 65, y);
+    doc.setTextColor(...PDF_MUTED);
+    doc.text(emptyText || 'Aucune donnée.', x0 + 2, y + 5.5);
+    doc.setDrawColor(...PDF_RULE);
+    doc.line(x0, y + 8, x0 + tableW, y + 8);
+    return y + 8;
+  }
 
-    y += 5 * lines.length + 2;
+  let zebra = 0;
+  rows.forEach((row) => {
+    doc.setFontSize(8.5);
+    const cellLines = {};
+    let maxLines = 1;
+    cols.forEach((c) => {
+      const v = row.cells[c.key];
+      const lines = Array.isArray(v)
+        ? v
+        : doc.splitTextToSize(v == null || v === '' ? '' : String(v), c.w - 4);
+      cellLines[c.key] = lines;
+      maxLines = Math.max(maxLines, lines.length);
+    });
+    const rowH = Math.max(7, maxLines * 4.2 + 3);
+
+    if (y + rowH > bottom) {
+      doc.addPage();
+      y = 14;
+      drawHeader();
+    }
+
+    if (row.kind === 'subtotal') {
+      doc.setFillColor(252, 240, 196);
+      doc.rect(x0, y, tableW, rowH, 'F');
+    } else if (zebra % 2 === 1) {
+      doc.setFillColor(...PDF_ZEBRA);
+      doc.rect(x0, y, tableW, rowH, 'F');
+    }
+    if (row.kind !== 'subtotal') zebra += 1;
+
+    let x = x0;
+    cols.forEach((c) => {
+      const muted = row.kind === 'empty' && c.key !== cols[0].key;
+      doc.setTextColor(...(muted ? PDF_MUTED : PDF_BLACK));
+      doc.setFont(
+        'helvetica',
+        row.kind === 'subtotal' || c.bold ? 'bold' : 'normal'
+      );
+      doc.setFontSize(8.5);
+      doc.text(cellLines[c.key], c.right ? x + c.w - 2 : x + 2, y + 4.8, {
+        align: c.right ? 'right' : 'left',
+      });
+      x += c.w;
+    });
+    doc.setDrawColor(...PDF_RULE);
+    doc.line(x0, y + rowH, x0 + tableW, y + rowH);
+    y += rowH;
   });
 
   return y;
 }
 
-function buildClassSessionsPdf(
-  school,
-  schoolClass,
-  sessions,
-  exercises
-) {
-  const doc = new jsPDF();
-  const marginX = 15;
-  let y = 20;
+// Ligne de total noire à texte jaune (comme le TOTAL des déplacements).
+function pdfTotalRow(doc, { x0, y, width, label, value }) {
+  const { H } = pdfPageSize(doc);
+  if (y + 9 > H - 16) {
+    doc.addPage();
+    y = 14;
+  }
+  doc.setFillColor(...PDF_BLACK);
+  doc.rect(x0, y, width, 9, 'F');
+  doc.setTextColor(...PDF_YELLOW);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.text(label, x0 + 2, y + 6);
+  if (value) doc.text(value, x0 + width - 2, y + 6, { align: 'right' });
+  return y + 9;
+}
 
-  doc.setFontSize(17);
-  doc.text(
-    `Cycle rugby — ${schoolClass.name}`,
-    marginX,
-    y
-  );
-  y += 9;
+// Encadré récapitulatif (bordure et bandeau jaunes).
+function pdfSummaryBox(doc, { x0, y, width, title, items }) {
+  const { H } = pdfPageSize(doc);
+  const boxH = 12 + items.length * 4.8;
+  if (y + boxH > H - 16) {
+    doc.addPage();
+    y = 14;
+  }
+  doc.setDrawColor(...PDF_YELLOW);
+  doc.setLineWidth(0.8);
+  doc.rect(x0, y, width, boxH);
+  doc.setLineWidth(0.2);
+  doc.setFillColor(...PDF_YELLOW);
+  doc.rect(x0, y, width, 7, 'F');
+  doc.setTextColor(...PDF_BLACK);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text(title, x0 + 3, y + 5);
+  items.forEach(([label, value], i) => {
+    const ly = y + 12 + i * 4.8;
+    const last = i === items.length - 1;
+    doc.setFont('helvetica', last ? 'bold' : 'normal');
+    doc.setFontSize(last ? 10 : 9);
+    doc.text(label, x0 + 3, ly);
+    doc.text(value, x0 + width - 3, ly, { align: 'right' });
+  });
+  return y + boxH;
+}
 
-  doc.setFontSize(11);
-  doc.text(`École : ${school.name}`, marginX, y);
-  y += 6;
+const SCHOOL_PDF_MARGIN = 12;
 
+function schoolSessionRows(doc, sessions, exercises) {
+  return sessions.map((sess, idx) => {
+    const sessExercises = exercises.filter((e) => e.sessionId === sess.id);
+    const titles = sessExercises.length
+      ? sessExercises.map((e) => e.title).join(', ')
+      : '—';
+    return {
+      cells: {
+        n: String(idx + 1),
+        date: formatDateShortFR(sess.date),
+        time: sess.time || '—',
+        exercises: titles,
+      },
+    };
+  });
+}
+
+function drawSchoolSessionsTable(doc, startY, sessions, exercises) {
+  const { W } = pdfPageSize(doc);
+  const M = SCHOOL_PDF_MARGIN;
+  const fixed = 12 + 26 + 20;
+  const cols = [
+    { key: 'n', label: 'N°', w: 12 },
+    { key: 'date', label: 'Date', w: 26 },
+    { key: 'time', label: 'Heure', w: 20 },
+    { key: 'exercises', label: 'Exercices', w: W - 2 * M - fixed },
+  ];
+  return pdfTable(doc, {
+    x0: M,
+    y: startY,
+    cols,
+    rows: schoolSessionRows(doc, sessions, exercises),
+    emptyText: 'Aucune séance programmée.',
+  });
+}
+
+function classInfoLabel(schoolClass) {
   const infoParts = [];
-
   if (schoolClass.headcount != null) {
     infoParts.push(`${schoolClass.headcount} élèves`);
   }
-
   const creneau = formatClassCreneau(schoolClass);
   if (creneau) infoParts.push(`Créneau : ${creneau}`);
+  return infoParts.join(' · ');
+}
 
-  if (infoParts.length) {
-    doc.text(infoParts.join(' · '), marginX, y);
-    y += 8;
-  } else {
-    y += 4;
-  }
+function schoolSeasonLabel(sessions) {
+  const seasons = [
+    ...new Set(sessions.map((s) => seasonOf(s.date)).filter(Boolean)),
+  ].sort();
+  if (!seasons.length) return seasonOf(todayISO());
+  return seasons.length === 1
+    ? seasons[0]
+    : `${seasons[0]} à ${seasons[seasons.length - 1]}`;
+}
 
-  drawSchoolSessionsTable(doc, y, sessions, exercises);
+function buildClassSessionsPdf(school, schoolClass, sessions, exercises, logo) {
+  const doc = new jsPDF({ format: 'a4' });
+  const { W } = pdfPageSize(doc);
+  const M = SCHOOL_PDF_MARGIN;
+
+  let y = pdfDrawBanner(doc, {
+    logo,
+    title: `Cycle rugby — ${schoolClass.name}`,
+    lines: [`École : ${school.name}`, classInfoLabel(schoolClass)],
+  });
+
+  y = drawSchoolSessionsTable(doc, y, sessions, exercises);
+  y = pdfTotalRow(doc, {
+    x0: M,
+    y,
+    width: W - 2 * M,
+    label: `TOTAL (${sessions.length} séance${sessions.length > 1 ? 's' : ''})`,
+  });
+
+  pdfDrawFooters(doc, {
+    moduleLabel: 'Rugby scolaire',
+    seasonLabel: schoolSeasonLabel(sessions),
+  });
 
   return doc;
 }
 
-function buildSchoolClassesPdf(
-  school,
-  classes,
-  allSessions,
-  allExercises
-) {
-  const doc = new jsPDF();
-  const marginX = 15;
-  const pageWidth = 210;
-  const maxY = 280;
-  let y = 20;
-
-  doc.setFontSize(18);
-  doc.text(`Cycles rugby — ${school.name}`, marginX, y);
-  y += 10;
+function buildSchoolClassesPdf(school, classes, allSessions, allExercises, logo) {
+  const doc = new jsPDF({ format: 'a4' });
+  const { W, H } = pdfPageSize(doc);
+  const M = SCHOOL_PDF_MARGIN;
+  const width = W - 2 * M;
 
   const sortedClasses = [...classes].sort((a, b) =>
     a.name.localeCompare(b.name)
   );
+  const classIds = new Set(sortedClasses.map((c) => c.id));
+  const schoolSessions = allSessions.filter((s) => classIds.has(s.classId));
+
+  let y = pdfDrawBanner(doc, {
+    logo,
+    title: `Cycles rugby — ${school.name}`,
+    lines: [
+      `${sortedClasses.length} classe${sortedClasses.length > 1 ? 's' : ''} · ${schoolSessions.length} séance${schoolSessions.length > 1 ? 's' : ''} programmée${schoolSessions.length > 1 ? 's' : ''}`,
+    ],
+  });
 
   sortedClasses.forEach((cls, idx) => {
-    if (idx > 0) {
-      if (y + 20 > maxY) {
-        doc.addPage();
-        y = 20;
-      } else {
-        y += 4;
-        doc.setDrawColor(210, 210, 210);
-        doc.line(marginX, y, pageWidth - marginX, y);
-        y += 8;
-      }
+    if (idx > 0) y += 8;
+    if (y + 30 > H - 16) {
+      doc.addPage();
+      y = 14;
     }
 
-    doc.setFontSize(14);
-    doc.setFont(undefined, 'bold');
-    doc.text(cls.name, marginX, y);
-    doc.setFont(undefined, 'normal');
-    y += 6;
-
-    doc.setFontSize(10);
-    const infoParts = [];
-
-    if (cls.headcount != null) {
-      infoParts.push(`${cls.headcount} élèves`);
-    }
-
-    const creneau = formatClassCreneau(cls);
-    if (creneau) infoParts.push(`Créneau : ${creneau}`);
-
-    if (infoParts.length) {
-      doc.text(infoParts.join(' · '), marginX, y);
-      y += 7;
-    }
+    y = pdfSectionTitle(doc, y, M, width, cls.name, classInfoLabel(cls));
 
     const classSessions = allSessions
       .filter((s) => s.classId === cls.id)
       .sort((a, b) =>
-        (a.date + (a.time || '')).localeCompare(
-          b.date + (b.time || '')
-        )
+        (a.date + (a.time || '')).localeCompare(b.date + (b.time || ''))
       );
 
-    y = drawSchoolSessionsTable(
-      doc,
-      y,
-      classSessions,
-      allExercises
-    );
+    y = drawSchoolSessionsTable(doc, y, classSessions, allExercises);
+  });
+
+  y = pdfTotalRow(doc, {
+    x0: M,
+    y: y + 8,
+    width,
+    label: `TOTAL (${sortedClasses.length} classe${sortedClasses.length > 1 ? 's' : ''})`,
+    value: `${schoolSessions.length} séance${schoolSessions.length > 1 ? 's' : ''}`,
+  });
+
+  pdfDrawFooters(doc, {
+    moduleLabel: 'Rugby scolaire',
+    seasonLabel: schoolSeasonLabel(schoolSessions),
   });
 
   return doc;
@@ -8995,6 +9194,11 @@ export default function MeleeApp() {
     setValidatingPlanningWeek,
   ] = useState(false);
 
+  const [
+    refreshingPlanningPdfs,
+    setRefreshingPlanningPdfs,
+  ] = useState(false);
+
   const [dataLoaded, setDataLoaded] =
     useState(false);
 
@@ -12296,54 +12500,49 @@ export default function MeleeApp() {
     }
   }
 
-  function buildPlanningPdf(week, entries, monday) {
-    const doc = new jsPDF();
-    const marginX = 15;
-    const pageWidth = 210;
-    const maxY = 280;
-    let y = 20;
+  function buildPlanningPdf(week, entries, monday, logo) {
+    const doc = new jsPDF({ format: 'a4' });
+    const { W } = pdfPageSize(doc);
+    const M = 12;
+    const width = W - 2 * M;
+    const weekLabel = `Semaine ${String(week.weekNumber).padStart(2, '0')} de ${week.year}`;
 
-    function ensureSpace(next) {
-      if (y + next > maxY) {
-        doc.addPage();
-        y = 20;
-      }
-    }
-
-    doc.setFontSize(16);
-    doc.text(
-      'Feuille de temps hebdomadaire',
-      marginX,
-      y
+    const sunday = new Date(
+      monday.getFullYear(),
+      monday.getMonth(),
+      monday.getDate() + 6
     );
-    y += 10;
+    const fmt = (d) =>
+      `${String(d.getDate()).padStart(2, '0')}/${String(
+        d.getMonth() + 1
+      ).padStart(2, '0')}/${d.getFullYear()}`;
 
-    doc.setFontSize(11);
-    doc.text(
-      `Semaine ${String(
-        week.weekNumber
-      ).padStart(2, '0')} de ${week.year}`,
-      marginX,
-      y
-    );
-    y += 7;
+    let y = pdfDrawBanner(doc, {
+      logo,
+      title: 'Feuille de temps hebdomadaire',
+      lines: [
+        `${weekLabel} · du ${fmt(monday)} au ${fmt(sunday)}`,
+        `Utilisateur : ${week.userDisplayName}`,
+      ],
+    });
 
-    doc.text(
-      `Utilisateur : ${week.userDisplayName}`,
-      marginX,
-      y
-    );
-    y += 10;
+    const cols = [
+      { key: 'day', label: 'Jour', w: 34, bold: true },
+      { key: 'slot', label: 'Horaire', w: 30 },
+      { key: 'desc', label: 'Description', w: width - 34 - 30 - 24 },
+      { key: 'dur', label: 'Durée', w: 24, right: true },
+    ];
 
+    const rows = [];
+    const dayTotals = [];
     let weekTotalMinutes = 0;
+    let workedDays = 0;
 
     DAY_LABELS_FULL.forEach((label, dayIndex) => {
       const dayEntries = entries
         .filter((e) => e.dayIndex === dayIndex)
         .sort((a, b) =>
-          (a.startTime || '').localeCompare(
-            b.startTime || ''
-          )
+          (a.startTime || '').localeCompare(b.startTime || '')
         );
 
       const dayDate = new Date(
@@ -12351,106 +12550,170 @@ export default function MeleeApp() {
         monday.getMonth(),
         monday.getDate() + dayIndex
       );
-
-      const dateLabel = `${String(
-        dayDate.getDate()
-      ).padStart(2, '0')}/${String(
-        dayDate.getMonth() + 1
-      ).padStart(2, '0')}`;
-
-      ensureSpace(14);
-
-      doc.setFontSize(12);
-      doc.setFont(undefined, 'bold');
-      doc.text(
-        `${label} ${dateLabel}`,
-        marginX,
-        y
-      );
-      doc.setFont(undefined, 'normal');
-      doc.setFontSize(10);
-
-      let dayTotalMinutes = 0;
+      const dayLabel = `${label} ${String(dayDate.getDate()).padStart(
+        2,
+        '0'
+      )}/${String(dayDate.getMonth() + 1).padStart(2, '0')}`;
 
       if (dayEntries.length === 0) {
-        y += 6;
-        doc.setTextColor(140, 140, 140);
-        doc.text(
-          'Aucun horaire',
-          marginX + 4,
-          y
-        );
-        doc.setTextColor(0, 0, 0);
-        y += 6;
-      } else {
-        dayEntries.forEach((entry) => {
-          const duration =
-            entryDurationMinutes(entry);
-          dayTotalMinutes += duration;
-
-          const desc = entry.description
-            ? doc.splitTextToSize(
-                entry.description,
-                130
-              )
-            : [''];
-
-          ensureSpace(6 * desc.length + 2);
-          y += 6;
-
-          doc.text(
-            `${entry.startTime || '--:--'} - ${
-              entry.endTime || '--:--'
-            }  (${formatMinutes(duration)})`,
-            marginX + 4,
-            y
-          );
-
-          if (desc[0]) {
-            doc.text(desc, marginX + 4, y + 5);
-            y += 5 * desc.length;
-          }
+        rows.push({
+          kind: 'empty',
+          cells: { day: dayLabel, slot: '—', desc: 'Aucun horaire', dur: '—' },
         });
+        dayTotals.push(0);
+        return;
+      }
 
-        y += 6;
-        doc.setFont(undefined, 'bold');
-        doc.text(
-          `Total jour : ${formatMinutes(
-            dayTotalMinutes
-          )}`,
-          marginX + 4,
-          y
-        );
-        doc.setFont(undefined, 'normal');
+      let dayTotalMinutes = 0;
+      dayEntries.forEach((entry, i) => {
+        const duration = entryDurationMinutes(entry);
+        dayTotalMinutes += duration;
+        rows.push({
+          cells: {
+            day: i === 0 ? dayLabel : '',
+            slot: `${entry.startTime || '--:--'} - ${entry.endTime || '--:--'}`,
+            desc: entry.description || '',
+            dur: formatMinutes(duration),
+          },
+        });
+      });
+
+      if (dayEntries.length > 1) {
+        rows.push({
+          kind: 'subtotal',
+          cells: {
+            day: '',
+            slot: '',
+            desc: `Total ${label.toLowerCase()}`,
+            dur: formatMinutes(dayTotalMinutes),
+          },
+        });
       }
 
       weekTotalMinutes += dayTotalMinutes;
-      y += 4;
-      doc.setDrawColor(210, 210, 210);
-      doc.line(
-        marginX,
-        y,
-        pageWidth - marginX,
-        y
-      );
-      y += 4;
+      if (dayTotalMinutes > 0) workedDays += 1;
+      dayTotals.push(dayTotalMinutes);
     });
 
-    ensureSpace(12);
-    y += 4;
+    y = pdfTable(doc, { x0: M, y, cols, rows });
+    y = pdfTotalRow(doc, {
+      x0: M,
+      y,
+      width,
+      label: 'TOTAL SEMAINE (lundi au dimanche)',
+      value: formatMinutes(weekTotalMinutes),
+    });
 
-    doc.setFontSize(13);
-    doc.setFont(undefined, 'bold');
-    doc.text(
-      `Total semaine (lundi au dimanche) : ${formatMinutes(
-        weekTotalMinutes
-      )}`,
-      marginX,
-      y
+    const avg = workedDays
+      ? formatMinutes(Math.round(weekTotalMinutes / workedDays))
+      : '—';
+    const busiest = dayTotals.reduce(
+      (best, v, i) => (v > best.v ? { v, i } : best),
+      { v: 0, i: -1 }
     );
-    doc.setFont(undefined, 'normal');
+
+    pdfSummaryBox(doc, {
+      x0: M,
+      y: y + 7,
+      width: 100,
+      title: 'Récapitulatif de la semaine',
+      items: [
+        ['Créneaux saisis', String(entries.length)],
+        ['Jours travaillés', `${workedDays} / 7`],
+        ['Moyenne par jour travaillé', avg],
+        [
+          'Journée la plus chargée',
+          busiest.i >= 0
+            ? `${DAY_LABELS_FULL[busiest.i]} (${formatMinutes(busiest.v)})`
+            : '—',
+        ],
+        ['Total semaine', formatMinutes(weekTotalMinutes)],
+      ],
+    });
+
+    pdfDrawFooters(doc, {
+      moduleLabel: 'Feuille de temps',
+      seasonLabel: seasonOf(
+        `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-01`
+      ),
+    });
 
     return doc;
+  }
+
+  // Refait les PDF des semaines déjà validées avec la charte actuelle,
+  // en remplaçant le fichier du document existant (même document, même dossier).
+  async function refreshPlanningPdfs(weeks) {
+    const targets = weeks
+      .filter((w) => w.status === 'valide' && w.documentId)
+      .map((w) => ({
+        week: w,
+        doc: documents.find((d) => d.id === w.documentId),
+      }))
+      .filter((t) => t.doc);
+
+    if (targets.length === 0) {
+      showToast('Aucun PDF validé à mettre à jour.');
+      return;
+    }
+
+    setRefreshingPlanningPdfs(true);
+    let done = 0;
+    let failed = 0;
+
+    try {
+      const logo = await loadUsbLogo();
+
+      for (const { week, doc: oldDoc } of targets) {
+        try {
+          const monday = getMondayOfISOWeek(week.weekNumber, week.year);
+          const weekEntries = planningEntries
+            .filter((e) => e.weekId === week.id)
+            .sort((a, b) => a.dayIndex - b.dayIndex);
+          const pdf = buildPlanningPdf(week, weekEntries, monday, logo);
+          const blob = pdf.output('blob');
+          const path = `${genId()}.pdf`;
+
+          const { error: uploadError } = await supabase.storage
+            .from('documents')
+            .upload(path, blob, { contentType: 'application/pdf' });
+          if (uploadError) throw uploadError;
+
+          const { error } = await supabase
+            .from('documents')
+            .update({
+              storage_path: path,
+              size: blob.size,
+              mime_type: 'application/pdf',
+            })
+            .eq('id', oldDoc.id);
+          if (error) {
+            await supabase.storage.from('documents').remove([path]);
+            throw error;
+          }
+
+          if (oldDoc.storagePath) {
+            await supabase.storage
+              .from('documents')
+              .remove([oldDoc.storagePath]);
+          }
+          done += 1;
+        } catch (error) {
+          console.error(error);
+          failed += 1;
+        }
+      }
+
+      await loadData();
+    } finally {
+      setRefreshingPlanningPdfs(false);
+    }
+
+    showToast(
+      failed
+        ? `${done} PDF mis à jour, ${failed} en échec.`
+        : `${done} PDF mis à jour au nouveau format.`
+    );
   }
 
   async function validatePlanningWeek(
@@ -12461,10 +12724,12 @@ export default function MeleeApp() {
     try {
       setValidatingPlanningWeek(true);
 
+      const logo = await loadUsbLogo();
       const pdf = buildPlanningPdf(
         week,
         entries,
-        monday
+        monday,
+        logo
       );
 
       const blob = pdf.output('blob');
@@ -16592,15 +16857,41 @@ export default function MeleeApp() {
                       Gestion planning
                     </h1>
 
-                    <button
-                      className="btn-primary"
-                      onClick={() =>
-                        setShowPlanningWeekForm(true)
-                      }
-                    >
-                      <Plus size={15} />
-                      Nouvelle semaine
-                    </button>
+                    <div className="flex gap-2 flex-wrap">
+                      {planningWeeks.some(
+                        (w) =>
+                          w.status === 'valide' &&
+                          w.documentId
+                      ) && (
+                        <button
+                          className="btn-secondary"
+                          disabled={refreshingPlanningPdfs}
+                          onClick={() =>
+                            refreshPlanningPdfs(planningWeeks)
+                          }
+                        >
+                          {refreshingPlanningPdfs ? (
+                            <Loader2
+                              size={15}
+                              className="animate-spin"
+                            />
+                          ) : (
+                            <RefreshCw size={15} />
+                          )}
+                          Mettre à jour les anciens PDF
+                        </button>
+                      )}
+
+                      <button
+                        className="btn-primary"
+                        onClick={() =>
+                          setShowPlanningWeekForm(true)
+                        }
+                      >
+                        <Plus size={15} />
+                        Nouvelle semaine
+                      </button>
+                    </div>
                   </div>
 
                   <div className="pitch-divider" />
@@ -17171,6 +17462,7 @@ export default function MeleeApp() {
                       )}
                     </p>
 
+                    <div className="flex gap-2 flex-wrap">
                     {selectedPlanningWeek.status ===
                     'valide' ? (
                       planningValidatedDocument && (
@@ -17186,7 +17478,34 @@ export default function MeleeApp() {
                           Voir le PDF
                         </a>
                       )
-                    ) : (
+                    ) : null}
+
+                    {selectedPlanningWeek.status ===
+                      'valide' &&
+                      planningValidatedDocument && (
+                        <button
+                          className="btn-secondary"
+                          disabled={refreshingPlanningPdfs}
+                          onClick={() =>
+                            refreshPlanningPdfs([
+                              selectedPlanningWeek,
+                            ])
+                          }
+                        >
+                          {refreshingPlanningPdfs ? (
+                            <Loader2
+                              size={14}
+                              className="animate-spin"
+                            />
+                          ) : (
+                            <RefreshCw size={14} />
+                          )}
+                          Mettre à jour le PDF
+                        </button>
+                      )}
+
+                    {selectedPlanningWeek.status ===
+                    'valide' ? null : (
                       <button
                         className="btn-primary"
                         disabled={
@@ -17213,6 +17532,7 @@ export default function MeleeApp() {
                         Valider la semaine
                       </button>
                     )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -19134,13 +19454,15 @@ export default function MeleeApp() {
                           selectedSchoolClasses.length ===
                           0
                         }
-                        onClick={() => {
+                        onClick={async () => {
+                          const logo = await loadUsbLogo();
                           const doc =
                             buildSchoolClassesPdf(
                               selectedSchool,
                               selectedSchoolClasses,
                               schoolSessions,
-                              schoolExercises
+                              schoolExercises,
+                              logo
                             );
 
                           doc.save(
@@ -19420,13 +19742,15 @@ export default function MeleeApp() {
                           selectedClassSessions.length ===
                           0
                         }
-                        onClick={() => {
+                        onClick={async () => {
+                          const logo = await loadUsbLogo();
                           const doc =
                             buildClassSessionsPdf(
                               selectedSchool,
                               selectedClass,
                               selectedClassSessions,
-                              schoolExercises
+                              schoolExercises,
+                              logo
                             );
 
                           doc.save(
