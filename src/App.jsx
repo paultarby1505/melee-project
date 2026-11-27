@@ -6314,10 +6314,19 @@ function computeCostPerKm(params, fuelPrice) {
   };
 }
 
-function computeMinibusTrip(kmOneWay, roundTrip, params, fuelPrice) {
+/*
+  billFuel = false : on ne facture que l'usure du véhicule. Le carburant
+  vaut alors 0 et le prix du gazole n'est pas nécessaire.
+*/
+function computeMinibusTrip(kmOneWay, roundTrip, params, fuelPrice, billFuel = true) {
   const oneWay = roundKm(Math.max(0, kmOneWay || 0));
   const total = roundKm(roundTrip ? oneWay * 2 : oneWay);
-  const perKm = computeCostPerKm(params, fuelPrice);
+  const perKm = billFuel
+    ? computeCostPerKm(params, fuelPrice)
+    : (() => {
+        const wear = Number(params?.wearCostPerKm) || 0;
+        return { fuelPerKm: 0, wearPerKm: wear, totalPerKm: wear };
+      })();
   if (perKm.fuelPerKm == null) return null;
   const fuelCost = round2(total * perKm.fuelPerKm);
   const wearCost = round2(total * perKm.wearPerKm);
@@ -6329,6 +6338,35 @@ function computeMinibusTrip(kmOneWay, roundTrip, params, fuelPrice) {
     totalCost: round2(fuelCost + wearCost),
     costPerKm: Math.round(perKm.totalPerKm * 10000) / 10000,
   };
+}
+
+// Un déplacement « usure seule » est enregistré sans prix du gazole et
+// avec un coût carburant à 0. Les anciens déplacements ont toujours un
+// prix du gazole (ou aucun détail du tout) : ils restent « carburant facturé ».
+function isFuelBilled(trip) {
+  return !(trip && trip.fuelPrice == null && trip.fuelCost === 0);
+}
+
+function FuelBillingToggle({ value, onChange }) {
+  return (
+    <label
+      className="flex items-center gap-2 text-sm"
+      style={{ cursor: 'pointer' }}
+    >
+      <input
+        type="checkbox"
+        style={{ width: 'auto' }}
+        checked={value}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      Facturer le carburant
+      {!value && (
+        <span className="text-xs" style={{ color: 'var(--ink-light)' }}>
+          (usure du véhicule seule)
+        </span>
+      )}
+    </label>
+  );
 }
 
 /*
@@ -6821,6 +6859,9 @@ function MinibusTripFormModal({
   const [usbCount, setUsbCount] = useState(
     src?.usbCount != null ? String(src.usbCount) : ''
   );
+  const [billFuel, setBillFuel] = useState(
+    src ? isFuelBilled(src) : initial?.billFuel ?? true
+  );
   const [calcBusy, setCalcBusy] = useState(false);
   const [calcError, setCalcError] = useState('');
   const [error, setError] = useState('');
@@ -6833,8 +6874,15 @@ function MinibusTripFormModal({
     !!existing &&
     existing.vehicle === vehicle &&
     existing.fuelPrice != null;
+  // Déplacement « usure seule » modifié sans changer de minibus : on
+  // garde aussi son coût d'usure d'origine.
+  const keepWear =
+    !!existing &&
+    existing.vehicle === vehicle &&
+    !billFuel &&
+    existing.wearCostPerKm != null;
   const currentVehicle = vehicles.find((v) => v.id === vehicle);
-  const params = keepOld
+  const params = keepOld || keepWear
     ? {
         consumption: existing.consumption,
         wearCostPerKm: existing.wearCostPerKm,
@@ -6845,7 +6893,9 @@ function MinibusTripFormModal({
   const km = Number(String(kmOneWay).replace(',', '.'));
   const kmValid = Number.isFinite(km) && km > 0 && km < 3000;
   const preview =
-    kmValid && vehicle ? computeMinibusTrip(km, roundTrip, params, price) : null;
+    kmValid && vehicle
+      ? computeMinibusTrip(km, roundTrip, params, price, billFuel)
+      : null;
   const distanceValidated =
     kmValid &&
     ((distanceSource === 'auto' &&
@@ -6911,7 +6961,7 @@ function MinibusTripFormModal({
       return setError(
         "La distance n'est pas validée : calcule l'itinéraire, ou confirme la distance saisie à la main."
       );
-    if (price == null)
+    if (billFuel && price == null)
       return setError(
         "Aucun prix du gazole connu : actualise le prix dans l'onglet Carburant et véhicules."
       );
@@ -6934,7 +6984,7 @@ function MinibusTripFormModal({
       distanceSource,
       durationMin: distanceSource === 'auto' ? route?.durationMin ?? null : null,
       routeSummary: distanceSource === 'auto' ? route?.summary || '' : '',
-      fuelPrice: Number(price),
+      fuelPrice: billFuel ? Number(price) : null,
       consumption: Number(params?.consumption) || 0,
       wearCostPerKm: Number(params?.wearCostPerKm) || 0,
       ...preview,
@@ -7172,16 +7222,24 @@ function MinibusTripFormModal({
             onChange={setVehicle}
             vehicles={vehicles}
             fuelPrice={fuelPrice}
+            billFuel={billFuel}
           />
+
+          <FuelBillingToggle value={billFuel} onChange={setBillFuel} />
 
           <TripCostBreakdown
             preview={preview}
             fuelPrice={price}
             roundTrip={roundTrip}
+            billFuel={billFuel}
             note={
-              keepOld
+              keepOld && billFuel
                 ? `Calcul d'origine conservé : gazole à ${formatFuelPrice(
                     price
+                  )}.`
+                : keepWear
+                ? `Coût d'usure d'origine conservé : ${formatPerKm(
+                    existing.wearCostPerKm
                   )}.`
                 : !vehicle
                 ? 'Choisis un minibus pour voir le coût.'
@@ -7267,6 +7325,7 @@ function MinibusTripFormModal({
 
 function TripDetailModal({ trip, onEdit, onDuplicate, onDelete, onCancel }) {
   const tripShares = computeTripShares(trip);
+  const fuelBilled = isFuelBilled(trip);
   const rows = [
     ['Date', `${formatDateFR(trip.tripDate)} ${trip.tripDate.slice(0, 4)}`],
     ['Catégorie', trip.category || '—'],
@@ -7288,8 +7347,15 @@ function TripDetailModal({ trip, onEdit, onDuplicate, onDelete, onCancel }) {
         trip.consumption != null ? ` · ${trip.consumption} L/100 km` : ''
       }`,
     ],
-    ['Prix du gazole appliqué', formatFuelPrice(trip.fuelPrice)],
-    ['Coût carburant', trip.fuelCost != null ? formatCurrency(trip.fuelCost) : '—'],
+    ['Prix du gazole appliqué', fuelBilled ? formatFuelPrice(trip.fuelPrice) : '—'],
+    [
+      'Coût carburant',
+      !fuelBilled
+        ? 'Non facturé (usure seule)'
+        : trip.fuelCost != null
+        ? formatCurrency(trip.fuelCost)
+        : '—',
+    ],
     [
       "Coût d'usure",
       trip.wearCost != null
@@ -7537,7 +7603,11 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
       ob: t.obCount != null ? String(t.obCount) : '—',
       usb: t.usbCount != null ? String(t.usbCount) : '—',
       km: pdfKm(t.kmTotal),
-      fuel: t.fuelCost != null ? pdfMoney(t.fuelCost) : '—',
+      fuel: !isFuelBilled(t)
+        ? 'Non fact.'
+        : t.fuelCost != null
+        ? pdfMoney(t.fuelCost)
+        : '—',
       wear: t.wearCost != null ? pdfMoney(t.wearCost) : '—',
       total: pdfMoney(t.totalCost),
       partOb: shares.ob != null ? pdfMoney(shares.ob) : '—',
@@ -7654,7 +7724,7 @@ function buildTripsPdf({ trips, periodLabel, filtersLabel, seasonLabel, logo }) 
   return doc;
 }
 
-function MinibusPicker({ value, onChange, vehicles, fuelPrice }) {
+function MinibusPicker({ value, onChange, vehicles, fuelPrice, billFuel = true }) {
   return (
     <div>
       <label>Minibus</label>
@@ -7662,7 +7732,9 @@ function MinibusPicker({ value, onChange, vehicles, fuelPrice }) {
         {MINIBUS_IDS.map((id) => {
           const active = value === id;
           const v = vehicles.find((x) => x.id === id);
-          const perKm = computeCostPerKm(v, fuelPrice);
+          const perKm = billFuel
+            ? computeCostPerKm(v, fuelPrice)
+            : { totalPerKm: Number(v?.wearCostPerKm) || 0 };
           return (
             <button
               key={id}
@@ -7722,7 +7794,7 @@ function TripTypeToggle({ value, onChange }) {
   );
 }
 
-function TripCostBreakdown({ preview, fuelPrice, note, roundTrip }) {
+function TripCostBreakdown({ preview, fuelPrice, note, roundTrip, billFuel = true }) {
   const rows = [
     ['Distance aller', preview ? formatKm(preview.kmOneWay) : '—'],
   ];
@@ -7731,8 +7803,15 @@ function TripCostBreakdown({ preview, fuelPrice, note, roundTrip }) {
   }
   rows.push(
     ['Distance totale', preview ? formatKm(preview.kmTotal) : '—'],
-    ['Prix du gazole utilisé', formatFuelPrice(fuelPrice)],
-    ['Coût carburant', preview ? formatCurrency(preview.fuelCost) : '—'],
+    ['Prix du gazole utilisé', billFuel ? formatFuelPrice(fuelPrice) : '—'],
+    [
+      'Coût carburant',
+      !billFuel
+        ? 'Non facturé'
+        : preview
+        ? formatCurrency(preview.fuelCost)
+        : '—',
+    ],
     ["Coût d'usure", preview ? formatCurrency(preview.wearCost) : '—']
   );
   return (
@@ -7743,7 +7822,7 @@ function TripCostBreakdown({ preview, fuelPrice, note, roundTrip }) {
         padding: 12,
       }}
     >
-      {fuelPrice == null && (
+      {billFuel && fuelPrice == null && (
         <p className="text-xs mb-2" style={{ color: 'var(--red)' }}>
           Prix du gazole inconnu : le coût ne peut pas être calculé.
         </p>
@@ -8153,12 +8232,13 @@ function TripCalculator({ vehicles, fuelPrice, onSave }) {
   const [vehicle, setVehicle] = useState('recent');
   const [km, setKm] = useState('');
   const [roundTrip, setRoundTrip] = useState(true);
+  const [billFuel, setBillFuel] = useState(true);
 
   const v = vehicles.find((x) => x.id === vehicle);
   const n = Number(String(km).replace(',', '.'));
   const preview =
     Number.isFinite(n) && n > 0
-      ? computeMinibusTrip(n, roundTrip, v, fuelPrice)
+      ? computeMinibusTrip(n, roundTrip, v, fuelPrice, billFuel)
       : null;
 
   return (
@@ -8171,7 +8251,9 @@ function TripCalculator({ vehicles, fuelPrice, onSave }) {
         onChange={setVehicle}
         vehicles={vehicles}
         fuelPrice={fuelPrice}
+        billFuel={billFuel}
       />
+      <FuelBillingToggle value={billFuel} onChange={setBillFuel} />
       <div>
         <label>Distance aller (km)</label>
         <input
@@ -8187,13 +8269,14 @@ function TripCalculator({ vehicles, fuelPrice, onSave }) {
         preview={preview}
         fuelPrice={fuelPrice}
         roundTrip={roundTrip}
+        billFuel={billFuel}
       />
       <div className="flex justify-end">
         <button
           className="btn-primary"
           disabled={!preview}
           onClick={() =>
-            onSave({ vehicle, kmOneWay: n, roundTrip })
+            onSave({ vehicle, kmOneWay: n, roundTrip, billFuel })
           }
         >
           <Plus size={14} />
@@ -18777,7 +18860,11 @@ export default function MeleeApp() {
                                     {formatKm(t.kmTotal)}
                                   </td>
                                   <td style={{ ...td, ...num }}>
-                                    {t.fuelCost != null ? formatCurrency(t.fuelCost) : '—'}
+                                    {!isFuelBilled(t)
+                                      ? 'Non facturé'
+                                      : t.fuelCost != null
+                                      ? formatCurrency(t.fuelCost)
+                                      : '—'}
                                   </td>
                                   <td style={{ ...td, ...num }}>
                                     {t.wearCost != null ? formatCurrency(t.wearCost) : '—'}
